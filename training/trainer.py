@@ -1,32 +1,32 @@
 import os
 import sys
 import platform
-import yaml
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from torch.utils.tensorboard import SummaryWriter
 from torch.utils.data import DataLoader
 from tqdm import tqdm
-import argparse
 import matplotlib.pyplot as plt
 import numpy as np
 import random
 import torch.nn.functional as F
+from datetime import datetime
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from models.autoencoder import VAE
 from data.dataset import get_celeba_dataloader
 from utils.metrics import compute_metrics
-from analysis.latent_analysis import LatentSpaceAnalyzer
 
 class Trainer:
-    def __init__(self, config, skip_cv=False, visualize_training=False):
+    def __init__(self, config, visualize_training=False):
         self.config = config
-        self.skip_cv = skip_cv
         self.visualize_training = visualize_training
         self.reference_image = None  # Will store our reference image for visualization
+        
+        # Create models directory if it doesn't exist
+        self.models_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'trained_models')
+        os.makedirs(self.models_dir, exist_ok=True)
         
         # Initialize visualization if enabled
         if self.visualize_training:
@@ -74,22 +74,10 @@ class Trainer:
             self.reference_image_display = images[idx].cpu().permute(1, 2, 0).numpy()
             self.reference_image_display = np.clip(self.reference_image_display, 0, 1)
         
-        # Initialize analyzer (for cross-val) with training dataloader
-        self.analyzer = LatentSpaceAnalyzer(
-            config=config,
-            dataloader=self.train_loader,
-            skip_cv=skip_cv,
-            visualize_training=visualize_training,
-            reference_image=self.reference_image if self.visualize_training else None,
-            reference_image_display=self.reference_image_display if self.visualize_training else None,
-            visualization_fig=self.fig if self.visualize_training else None,
-            visualization_axes=(self.ax1, self.ax2) if self.visualize_training else None
-        )
-        
         # Initialize model
         self.model = VAE(
             latent_dim=config['model']['latent_dim'],
-            input_channels=config['data']['input_channels'],
+            input_channels=config['model']['input_channels'],
             image_size=config['data']['image_size']
         )
         
@@ -98,24 +86,8 @@ class Trainer:
             self.model = nn.DataParallel(self.model)
         
         self.model = self.model.to(self.device)
-        
-        
-        # TensorBoard writer
-        self.writer = SummaryWriter(config['training']['log_dir'])
-        
-        # Make checkpoint directory
-        os.makedirs(config['training']['checkpoint_dir'], exist_ok=True)
-    
-    def find_optimal_latent_dim(self):
-        """
-        Perform cross-validation to find optimal latent dimension
-        """
-        print("Starting cross-validation for latent dimensions...")
-        best_dim, cv_results = self.analyzer.cross_validate_latent_dim()
-        print(f"Optimal latent dimension found: {best_dim}")
-        return best_dim, cv_results
-    
-    def update_visualization(self, model, images=None):
+
+    def update_visualization(self, images=None):
         """
         Update the visualization plot with the reference image and its reconstruction
         """
@@ -123,19 +95,18 @@ class Trainer:
             return
             
         with torch.no_grad():
-            # Get reconstruction of reference image
-            recon, _, _ = model(self.reference_image.to(self.device))
-            recon = recon[0].cpu()
+            if self.reference_image is None and images is not None:
+                idx = np.random.randint(0, images.size(0))
+                self.reference_image = images[idx:idx+1].clone()
+                self.reference_image_display = images[idx].cpu().permute(1, 2, 0).numpy()
+                self.reference_image_display = np.clip(self.reference_image_display, 0, 1)
             
-            # Convert reconstruction to numpy for plotting
-            recon = recon.permute(1, 2, 0).numpy()
+            recon, _, _ = self.model(self.reference_image.to(self.device))
+            recon = recon[0].cpu().permute(1, 2, 0).numpy()
             recon = np.clip(recon, 0, 1)
             
-            # Clear previous plots
             self.ax1.clear()
             self.ax2.clear()
-            
-            # Update plots
             self.ax1.imshow(self.reference_image_display)
             self.ax2.imshow(recon)
             self.ax1.set_title('Original')
@@ -143,7 +114,6 @@ class Trainer:
             self.ax1.axis('off')
             self.ax2.axis('off')
             
-            # Refresh the plot
             self.fig.canvas.draw()
             self.fig.canvas.flush_events()
             plt.pause(0.01)  # Small pause to allow plot to update
@@ -151,15 +121,6 @@ class Trainer:
     def compute_loss(self, recon_batch, images, mu, log_var, batch_size):
         """
         Compute the VAE loss function.
-        Args:
-            recon_batch: The reconstructed images
-            images: The original input images
-            mu: The mean of the latent distribution
-            log_var: The log variance of the latent distribution
-            batch_size: The batch size for proper normalization
-            
-        Returns:
-            tuple: (total_loss, reconstruction_loss, kl_divergence_loss)
         """
         # Compute reconstruction loss (MSE) on flattened tensors
         recon_loss = F.mse_loss(recon_batch.view(batch_size, -1), images.view(batch_size, -1))
@@ -172,124 +133,156 @@ class Trainer:
         
         return total_loss, recon_loss, kl_loss
 
-    def train_model(self, model):
+    def evaluate_model(self, model, val_loader):
         """
-        Train the model for the full number of epochs with GPU acceleration
+        Evaluate model performance using comprehensive metrics
+        
+        Returns:
+            float: A weighted composite score that considers all metrics
         """
-        print("Starting full model training...")
-        optimizer = torch.optim.Adam(
-            model.parameters(),
+        metrics = compute_metrics.evaluate_vae_performance(
+            model=model,
+            data_loader=val_loader,
+            device=self.device
+        )
+        
+        # Print detailed metrics
+        print("\nEvaluation Metrics:")
+        print("Reconstruction:")
+        print(f"  MSE: {metrics['reconstruction']['mse']:.4f}")
+        print(f"  PSNR: {metrics['reconstruction']['psnr']:.2f}")
+        print(f"  SSIM: {metrics['reconstruction']['ssim']:.4f}")
+        print("\nLatent Space:")
+        print(f"  KL Divergence: {metrics['latent']['kl_divergence']:.4f}")
+        print(f"  Variance Explained: {metrics['latent']['latent_variance_explained']:.4f}")
+        if 'silhouette_score' in metrics['latent']:
+            print(f"  Silhouette Score: {metrics['latent']['silhouette_score']:.4f}")
+        print(f"  Avg Pairwise Distance: {metrics['latent']['avg_pairwise_distance']:.4f}")
+        print("\nInterpolation:")
+        print(f"  Smoothness: {metrics['interpolation']['smoothness']:.4f}")
+        
+        # Compute weighted composite score
+        # You can adjust these weights based on what aspects are most important
+        weights = {
+            'reconstruction': {
+                'mse': -1.0,  # Negative because lower is better
+                'psnr': 0.3,
+                'ssim': 0.3
+            },
+            'latent': {
+                'kl_divergence': -0.2,  # Negative because lower is better
+                'latent_variance_explained': 0.2,
+                'avg_pairwise_distance': 0.1
+            },
+            'interpolation': {
+                'smoothness': -0.1  # Negative because lower is better
+            }
+        }
+        
+        composite_score = 0.0
+        for category in weights:
+            for metric, weight in weights[category].items():
+                if metric in metrics[category]:
+                    composite_score += metrics[category][metric] * weight
+        
+        return composite_score  # Lower score is better
+
+    def save_final_model(self):
+        """
+        Save the final trained model with latent dimension in filename
+        """
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        latent_dim = self.config['model']['latent_dim']
+        filename = f'vae_latent{latent_dim}_{timestamp}.pt'
+        save_path = os.path.join(self.models_dir, filename)
+        
+        # If using DataParallel, save the internal module
+        model_to_save = self.model.module if hasattr(self, 'multi_gpu') and self.multi_gpu else self.model
+        torch.save(model_to_save.state_dict(), save_path)
+        print(f"\nFinal model saved to: {save_path}")
+
+    def train_model(self, train_loader=None, val_loader=None, num_epochs=None):
+        """
+        Train the model with the given parameters.
+        """
+        if train_loader is None:
+            train_loader = self.train_loader
+        if val_loader is None:
+            val_loader = self.val_loader
+        if num_epochs is None:
+            num_epochs = self.config['training']['num_epochs']
+        
+        optimizer = optim.Adam(
+            self.model.parameters(),
             lr=self.config['training']['learning_rate'],
             weight_decay=self.config['training']['weight_decay']
         )
         
         # Initialize mixed precision scaler if on CUDA
-        scaler = torch.cuda.amp.GradScaler() if (self.device.type == 'cuda' and self.config['training']['mixed_precision']) else None
+        scaler = torch.cuda.amp.GradScaler() if (self.device.type == 'cuda' and 
+                self.config['training']['mixed_precision']) else None
         
         # Initialize learning rate scheduler
+        scheduler = None
         scheduler_config = self.config['training'].get('scheduler', {})
-        scheduler_name = scheduler_config.get('name', 'plateau')
-        scheduler_params = scheduler_config.get('params', {})
-        
-        if scheduler_name == 'plateau':
-            scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+        if scheduler_config.get('name') == 'plateau':
+            scheduler = optim.lr_scheduler.ReduceLROnPlateau(
                 optimizer,
-                mode=scheduler_params.get('mode', 'min'),
-                factor=scheduler_params.get('factor', 0.1),
-                patience=scheduler_params.get('patience', 10),
-                threshold=scheduler_params.get('threshold', 1e-4),
-                threshold_mode='rel',
-                cooldown=scheduler_params.get('cooldown', 0),
-                min_lr=scheduler_params.get('min_lr', 1e-6)
+                **scheduler_config.get('params', {})
             )
-        elif scheduler_name == 'one_cycle':
-            # Calculate total steps for the scheduler
-            total_steps = self.config['training']['num_epochs'] * len(self.train_loader)
-            
-            # Get scheduler parameters with defaults
-            max_lr = scheduler_params.get('max_lr', self.config['training']['learning_rate'])
-            pct_start = scheduler_params.get('pct_start', 0.3)
-            
-            scheduler = torch.optim.lr_scheduler.OneCycleLR(
-                optimizer,
-                max_lr=max_lr,
-                total_steps=total_steps,
-                pct_start=pct_start,
-                cycle_momentum=True,  # Enable momentum cycling
-                base_momentum=0.85,   # Minimum momentum
-                max_momentum=0.95,    # Maximum momentum
-                div_factor=25.0,      # Initial learning rate = max_lr/div_factor
-                final_div_factor=1e4  # Final learning rate = max_lr/final_div_factor
-            )
-        else:
-            print(f"Warning: Unknown scheduler '{scheduler_name}', proceeding without scheduling")
-            scheduler = None
         
         best_loss = float('inf')
         patience_counter = 0
         
-        for epoch in range(self.config['training']['num_epochs']):
-            model.train()
+        for epoch in range(num_epochs):
+            self.model.train()
             total_loss = 0
-            total_recon_loss = 0
-            total_kl_loss = 0
             
-            # TQDM progress bar
             progress_bar = tqdm(
-                self.train_loader,
-                desc=f'Epoch {epoch+1}/{self.config["training"]["num_epochs"]}',
-                mininterval=1.0  # update bar at least every 1s
+                train_loader,
+                desc=f'Epoch {epoch+1}/{num_epochs}',
+                mininterval=1.0
             )
             
             for batch_idx, (images, _) in enumerate(progress_bar):
                 images = images.to(self.device, non_blocking=True)
                 batch_size = images.size(0)
                 
-                # Update visualization at the start of each epoch
                 if batch_idx == 0:
-                    self.update_visualization(model, images)
+                    self.update_visualization(images)
                 
-                # Zero-grad first, outside the autocast
                 optimizer.zero_grad()
                 
                 if scaler is not None:
                     with torch.cuda.amp.autocast():
-                        recon_batch, mu, log_var = model(images)
-                        loss, recon_loss, kl_loss = self.compute_loss(recon_batch, images, mu, log_var, batch_size)
-                    
-                    # Scale the loss, then backward
+                        recon_batch, mu, log_var = self.model(images)
+                        loss, recon_loss, kl_loss = self.compute_loss(
+                            recon_batch, images, mu, log_var, batch_size
+                        )
                     scaler.scale(loss).backward()
-                    
-                    # Gradient clipping if configured
                     if 'max_grad_norm' in self.config['training']:
                         scaler.unscale_(optimizer)
                         torch.nn.utils.clip_grad_norm_(
-                            model.parameters(),
+                            self.model.parameters(),
                             self.config['training']['max_grad_norm']
                         )
-                    
                     scaler.step(optimizer)
                     scaler.update()
                 else:
-                    # Regular FP32 training (CPU or MPS)
-                    recon_batch, mu, log_var = model(images)
-                    loss, recon_loss, kl_loss = self.compute_loss(recon_batch, images, mu, log_var, batch_size)
+                    recon_batch, mu, log_var = self.model(images)
+                    loss, recon_loss, kl_loss = self.compute_loss(
+                        recon_batch, images, mu, log_var, batch_size
+                    )
                     loss.backward()
-                    
-                    # Gradient clipping if configured
                     if 'max_grad_norm' in self.config['training']:
                         torch.nn.utils.clip_grad_norm_(
-                            model.parameters(),
+                            self.model.parameters(),
                             self.config['training']['max_grad_norm']
                         )
-                    
                     optimizer.step()
                 
                 total_loss += loss.item()
-                total_recon_loss += recon_loss.item()
-                total_kl_loss += kl_loss.item()
                 
-                # Update progress bar's displayed info
                 current_lr = optimizer.param_groups[0]['lr']
                 progress_bar.set_postfix({
                     'loss': f'{loss.item():.4f}',
@@ -297,127 +290,29 @@ class Trainer:
                     'kl': f'{kl_loss.item():.4f}',
                     'lr': f'{current_lr:.2e}'
                 })
+            
+            avg_loss = total_loss / len(train_loader)
+            
+            if val_loader is not None:
+                val_loss = self.evaluate_model(self.model, val_loader)
+                print(f'====> Epoch: {epoch+1} Average loss: {avg_loss:.4f} Val loss: {val_loss:.4f}')
                 
-                # Log to TensorBoard occasionally
-                global_step = epoch * len(self.train_loader) + batch_idx
-                if batch_idx % self.config['training']['log_interval'] == 0:
-                    self.writer.add_scalar('train/loss', loss.item(), global_step)
-                    self.writer.add_scalar('train/recon_loss', recon_loss.item(), global_step)
-                    self.writer.add_scalar('train/kl_loss', kl_loss.item(), global_step)
-                    self.writer.add_scalar('train/lr', current_lr, global_step)
-            
-            # Average epoch losses
-            avg_loss = total_loss / len(self.train_loader)
-            avg_recon_loss = total_recon_loss / len(self.train_loader)
-            avg_kl_loss = total_kl_loss / len(self.train_loader)
-            print(f'====> Epoch: {epoch+1} Average loss: {avg_loss:.4f} (Recon: {avg_recon_loss:.4f}, KL: {avg_kl_loss:.4f}) LR: {current_lr:.2e}')
-            
-            # Update learning rate scheduler
-            if scheduler is not None:
-                if isinstance(scheduler, torch.optim.lr_scheduler.ReduceLROnPlateau):
-                    scheduler.step(avg_loss)  # Pass validation loss for ReduceLROnPlateau
-                    current_lr = optimizer.param_groups[0]['lr']
-                    print(f'Learning rate adjusted to: {current_lr:.2e}')
+                if scheduler is not None:
+                    if isinstance(scheduler, optim.lr_scheduler.ReduceLROnPlateau):
+                        scheduler.step(val_loss)
+                
+                if val_loss < best_loss:
+                    best_loss = val_loss
+                    patience_counter = 0
                 else:
-                    scheduler.step()  # Step for other schedulers like OneCycleLR
-            
-            # Early stopping check
-            if avg_loss < best_loss:
-                best_loss = avg_loss
-                patience_counter = 0
-                
-                # Save best model if configured
-                if self.config['training'].get('save_best_only', False):
-                    checkpoint_path = os.path.join(
-                        self.config['training']['checkpoint_dir'],
-                        'best_model.pt'
-                    )
-                    torch.save({
-                        'epoch': epoch + 1,
-                        'model_state_dict': model.state_dict(),
-                        'optimizer_state_dict': optimizer.state_dict(),
-                        'scheduler_state_dict': scheduler.state_dict() if scheduler is not None else None,
-                        'loss': best_loss,
-                    }, checkpoint_path)
-            else:
-                patience_counter += 1
-                if patience_counter >= self.config['training'].get('early_stopping_patience', float('inf')):
-                    print(f"\nEarly stopping triggered after {epoch + 1} epochs!")
-                    break
-            
-            # Regular checkpoint saving
-            if not self.config['training'].get('save_best_only', False) and \
-               (epoch + 1) % self.config['training']['save_interval'] == 0:
-                checkpoint_path = os.path.join(
-                    self.config['training']['checkpoint_dir'],
-                    f'checkpoint_epoch_{epoch+1}.pt'
-                )
-                torch.save({
-                    'epoch': epoch + 1,
-                    'model_state_dict': model.state_dict(),
-                    'optimizer_state_dict': optimizer.state_dict(),
-                    'scheduler_state_dict': scheduler.state_dict() if scheduler is not None else None,
-                    'loss': avg_loss,
-                }, checkpoint_path)
+                    patience_counter += 1
+                    if patience_counter >= self.config['training'].get('early_stopping_patience', float('inf')):
+                        print(f"\nEarly stopping triggered after {epoch + 1} epochs!")
+                        break
         
-        return model
-    
-    def analyze_model(self, model):
-        """
-        Analyze the trained model to find attribute directions
-        """
-        print("Analyzing model and finding attribute directions...")
-        attribute_directions = self.analyzer.find_attribute_directions(model)
-        self.analyzer.visualize_latent_space(model)
-        return attribute_directions
-    
-    def train(self):
-        """
-        Main training pipeline:
-        1. If enabled, run cross-validation to find optimal latent dimension
-        2. Train final model with optimal/configured dimension
-        3. Analyze model
-        4. Save final results
-        """
-        # 1. Cross-validation (if enabled)
-        if self.config['cross_validation']['enabled'] and not self.skip_cv:
-            print("Starting cross-validation to find optimal latent dimension...")
-            best_dim = self.analyzer.run_cross_validation()
-            print(f"Cross-validation complete. Optimal latent dimension: {best_dim}")
-        else:
-            print("Skipping cross-validation, using predefined latent dimension...")
-            best_dim = self.config['model']['latent_dim']
-        
-        print(f"\nTraining final model with latent dimension: {best_dim}")
-        
-        # 2. Initialize model with best/configured dimension
-        self.model = VAE(
-            latent_dim=best_dim,
-            input_channels=self.config['data']['input_channels'],
-            image_size=self.config['data']['image_size']
-        ).to(self.device)
-        
-        # Multi-GPU if available
-        if hasattr(self, 'multi_gpu') and self.multi_gpu:
-            self.model = nn.DataParallel(self.model)
-        
-        # 3. Train final model
-        self.model = self.train_model(self.model)
-        
-        # 4. Analyze model
-        print("\nAnalyzing trained model...")
-        attribute_directions = self.analyzer.find_attribute_directions(self.model)
-        self.analyzer.visualize_latent_space(self.model)
-        
-        # 5. Save final results
-        print("\nSaving final model and results...")
-        torch.save({
-            'model_state_dict': self.model.state_dict(),
-            'latent_dim': best_dim,
-            'attribute_directions': attribute_directions
-        }, os.path.join(self.config['training']['checkpoint_dir'], 'final_model.pt'))
-        
-        print("Training complete! Model and analysis results saved.")
+        # Save the final trained model
+        self.save_final_model()
+        return self.model
 
     def __del__(self):
         """
@@ -426,17 +321,3 @@ class Trainer:
         if self.visualize_training:
             plt.close('all')
 
-def main():
-    with open('configs/config.yaml', 'r') as f:
-        config = yaml.safe_load(f)
-    
-    # Add argparse to handle command line arguments
-    parser = argparse.ArgumentParser(description='Train VAE model')
-    parser.add_argument('--skip-cv', action='store_true', help='Skip cross-validation and use predefined latent dimension')
-    args = parser.parse_args()
-    
-    trainer = Trainer(config, skip_cv=args.skip_cv)
-    trainer.train()
-
-if __name__ == '__main__':
-    main()

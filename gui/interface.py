@@ -4,7 +4,7 @@ import torch
 import numpy as np
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
                            QHBoxLayout, QPushButton, QLabel, QFileDialog,
-                           QSlider, QGroupBox, QScrollArea)
+                           QSlider, QGroupBox, QScrollArea, QMessageBox)
 from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QImage, QPixmap
 import torchvision.transforms as transforms
@@ -22,7 +22,7 @@ class LatentPilatorGUI(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Latent-pilator")
-        self.setGeometry(100, 100, 800, 600)  # Made window smaller
+        self.setGeometry(100, 100, 800, 600)
         
         # Load config
         with open('configs/config.yaml', 'r') as f:
@@ -33,16 +33,14 @@ class LatentPilatorGUI(QMainWindow):
             image_size=self.config['data']['image_size']
         )
         
-        # Load model and analysis results
-        self.load_model_and_directions()
+        # Initialize variables
+        self.model = None
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-        self.model = self.model.to(self.device)
-        self.model.eval()
         
         # Load dataset
         self.dataset = CelebADataset(
-            root_dir='data/celeba/img_align_celeba',
-            attr_path='data/celeba/list_attr_celeba.txt',
+            root_dir=self.config['data']['root_dir'],
+            attr_path=self.config['data']['attr_path'],
             transform=self.input_transform
         )
         
@@ -51,36 +49,19 @@ class LatentPilatorGUI(QMainWindow):
         
         self.current_image = None
         self.latent_vector = None
+        self.attribute_directions = None
         
-    def load_model_and_directions(self):
-        # Load the trained model
-        checkpoint = torch.load('checkpoints/best_model.pt')
-        latent_dim = checkpoint['model_state_dict']['encoder.fc_mu.weight'].size(0)  # Get latent dim from model weights
-        
-        # Initialize model with correct latent dimension
-        self.model = VAE(latent_dim=latent_dim)
-        self.model.load_state_dict(checkpoint['model_state_dict'])
-        
-        # Initialize attribute directions as identity matrix for now
-        # Each row represents a different attribute direction
-        self.attribute_directions = torch.eye(latent_dim)  # Default to identity matrix
-        
-        # Load attribute names
-        with open('data/celeba/list_attr_celeba.txt', 'r') as f:
-            next(f)  # Skip number of images
-            self.attribute_names = next(f).strip().split()
-    
     def init_ui(self):
         # Create central widget and layout
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
         layout = QHBoxLayout(central_widget)
-        layout.setSpacing(20)  # Add some spacing between panels
+        layout.setSpacing(20)
         
         # Left panel - Image display and buttons
         left_panel = QWidget()
         left_layout = QVBoxLayout(left_panel)
-        left_layout.setSpacing(10)  # Reduce spacing between elements
+        left_layout.setSpacing(10)
         
         # Original image
         self.original_label = QLabel("Original Image")
@@ -97,16 +78,23 @@ class LatentPilatorGUI(QMainWindow):
         # Buttons container
         buttons_container = QWidget()
         buttons_layout = QVBoxLayout(buttons_container)
-        buttons_layout.setSpacing(5)  # Minimal spacing between buttons
+        buttons_layout.setSpacing(5)
         
-        # Random image button
+        # Upload model button
+        self.upload_btn = QPushButton("Upload Model")
+        self.upload_btn.clicked.connect(self.upload_model)
+        buttons_layout.addWidget(self.upload_btn)
+        
+        # Random image button (disabled until model is loaded)
         self.random_btn = QPushButton("Fetch Random Image")
         self.random_btn.clicked.connect(self.fetch_random_image)
+        self.random_btn.setEnabled(False)
         buttons_layout.addWidget(self.random_btn)
         
-        # Reset button
+        # Reset button (disabled until model is loaded)
         self.reset_btn = QPushButton("Reset Sliders")
         self.reset_btn.clicked.connect(self.reset_sliders)
+        self.reset_btn.setEnabled(False)
         buttons_layout.addWidget(self.reset_btn)
         
         left_layout.addWidget(self.original_label)
@@ -118,55 +106,105 @@ class LatentPilatorGUI(QMainWindow):
         
         # Right panel - Controls
         right_panel = QWidget()
-        right_scroll = QScrollArea()  # Add scroll area for sliders
+        right_scroll = QScrollArea()
         right_scroll.setWidget(right_panel)
         right_scroll.setWidgetResizable(True)
         right_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        right_layout = QVBoxLayout(right_panel)
-        right_layout.setSpacing(5)  # Minimal spacing between sliders
-        
-        # Create attribute sliders
-        self.create_attribute_sliders(right_layout)
+        self.right_layout = QVBoxLayout(right_panel)
+        self.right_layout.setSpacing(5)
         
         # Add panels to main layout
-        layout.addWidget(left_panel, 1)  # Give less space to left panel
-        layout.addWidget(right_scroll, 1)  # Give more space to right panel
+        layout.addWidget(left_panel, 1)
+        layout.addWidget(right_scroll, 1)
+        
+        # Add status label
+        self.status_label = QLabel("Please upload a model to begin")
+        self.status_label.setAlignment(Qt.AlignCenter)
+        self.right_layout.addWidget(self.status_label)
+    
+    def upload_model(self):
+        try:
+            file_name, _ = QFileDialog.getOpenFileName(self, "Select Model Checkpoint", "", "Checkpoint Files (*.pt);;All Files (*)")
+            if file_name:
+                # Load the checkpoint
+                checkpoint = torch.load(file_name)
+                latent_dim = checkpoint['model_state_dict']['encoder.fc_mu.weight'].size(0)
+                
+                # Initialize model with correct dimensions
+                self.model = VAE(
+                    latent_dim=latent_dim,
+                    input_channels=self.config['model']['input_channels'],
+                    image_size=self.config['data']['image_size']
+                )
+                self.model.load_state_dict(checkpoint['model_state_dict'])
+                self.model = self.model.to(self.device)
+                self.model.eval()
+                
+                # Initialize attribute directions
+                self.attribute_directions = torch.eye(latent_dim)
+                
+                # Create sliders after model is loaded
+                self.create_attribute_sliders(self.right_layout)
+                
+                # Enable buttons
+                self.random_btn.setEnabled(True)
+                self.reset_btn.setEnabled(True)
+                
+                # Update status
+                self.status_label.setText("Model loaded successfully")
+                
+                # Load attribute names if available
+                try:
+                    with open('data/celeba/list_attr_celeba.txt', 'r') as f:
+                        next(f)  # Skip number of images
+                        self.attribute_names = next(f).strip().split()
+                except:
+                    self.attribute_names = [f"Dimension {i+1}" for i in range(latent_dim)]
+                
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to load model: {str(e)}")
+            self.status_label.setText("Error loading model")
     
     def create_attribute_sliders(self, layout):
-        self.sliders = {}
+        # Clear existing sliders
+        for i in reversed(range(layout.count())):
+            layout.itemAt(i).widget().setParent(None)
         
-        # Get number of latent dimensions from the model
+        self.sliders = {}
         num_latent_dims = self.model.latent_dim
         
         # Create a slider for each latent dimension
         for i in range(num_latent_dims):
-            # Create a horizontal container for each slider group
             container = QWidget()
             container_layout = QHBoxLayout(container)
-            container_layout.setContentsMargins(5, 5, 5, 5)  # Minimal margins
+            container_layout.setContentsMargins(5, 5, 5, 5)
             
             # Label for dimension
             label = QLabel(f"Dim {i+1}")
-            label.setFixedWidth(50)  # Fixed width for labels
+            label.setFixedWidth(50)
             container_layout.addWidget(label)
             
-            # Slider with previous style
+            # Slider
             slider = QSlider(Qt.Horizontal)
             slider.setMinimum(-100)
             slider.setMaximum(100)
             slider.setValue(0)
-            slider.setTickPosition(QSlider.TicksBelow)  # Revert to previous style
-            slider.setTickInterval(10)  # Revert to previous style
+            slider.setTickPosition(QSlider.TicksBelow)
+            slider.setTickInterval(10)
             slider.valueChanged.connect(self.update_image)
             container_layout.addWidget(slider)
             
             layout.addWidget(container)
             self.sliders[i] = slider
-            
+        
         # Add stretch at the end to keep sliders at the top
         layout.addStretch()
     
     def fetch_random_image(self):
+        if self.model is None:
+            QMessageBox.warning(self, "Warning", "Please load a model first")
+            return
+            
         # Get a random index
         random_idx = random.randint(0, len(self.dataset) - 1)
         
@@ -174,7 +212,8 @@ class LatentPilatorGUI(QMainWindow):
         img_tensor, _ = self.dataset[random_idx]
         
         # Convert tensor to PIL Image for display
-        img_np = ((img_tensor * 0.5 + 0.5) * 255).byte().permute(1, 2, 0).numpy()
+        # Note: Dataset outputs values in [0, 1] range
+        img_np = (img_tensor * 255).byte().permute(1, 2, 0).numpy()
         image = Image.fromarray(img_np)
         
         # Display and process the image
@@ -190,7 +229,7 @@ class LatentPilatorGUI(QMainWindow):
         self.update_image()
     
     def update_image(self):
-        if self.latent_vector is None:
+        if self.model is None or self.latent_vector is None:
             return
             
         # Create manipulation vector based on slider values
@@ -198,7 +237,6 @@ class LatentPilatorGUI(QMainWindow):
         
         for dim, slider in self.sliders.items():
             value = slider.value() / 100.0  # Normalize to [-1, 1]
-            # Each row in attribute_directions represents a basis vector
             direction = self.attribute_directions[dim].to(self.device)
             manipulation += value * direction
         
@@ -209,8 +247,7 @@ class LatentPilatorGUI(QMainWindow):
             
             # Convert to image
             generated = generated.cpu().squeeze(0)
-            generated = generated * 0.5 + 0.5  # Denormalize
-            generated = generated.clamp(0, 1)
+            # Note: Model output is in [0, 1] range due to sigmoid activation
             generated = (generated * 255).byte().permute(1, 2, 0).numpy()
             
             # Display generated image
@@ -231,6 +268,8 @@ class LatentPilatorGUI(QMainWindow):
         label.setPixmap(pixmap)
     
     def reset_sliders(self):
+        if self.model is None:
+            return
         for slider in self.sliders.values():
             slider.setValue(0)
 

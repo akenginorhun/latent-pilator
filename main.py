@@ -2,9 +2,39 @@ import argparse
 import os
 import yaml
 from training.trainer import Trainer
+from analysis.cross_validation import CrossValidator
 from gui.interface import LatentPilatorGUI
 from PyQt5.QtWidgets import QApplication
 import sys
+import torch
+
+def run_cross_validation(config, visualize_training=False):
+    """
+    Run cross-validation to find the optimal latent dimension
+    
+    Args:
+        config: Configuration dictionary
+        visualize_training: Whether to visualize training progress
+    
+    Returns:
+        optimal_latent_dim: The best performing latent dimension
+    """
+    print("\n=== Starting Cross-Validation Phase ===")
+    cross_validator = CrossValidator(config, visualize_training=visualize_training)
+    
+    # Get cross-validation parameters from config
+    cv_params = config.get('training', {}).get('cross_validation', {})
+    sample_size = cv_params.get('sample_size', 1000)
+    n_folds = cv_params.get('n_folds', 3)
+    dimensions = cv_params.get('dimensions', [32, 64, 128, 256])
+    
+    optimal_latent_dim = cross_validator.run_cross_validation(
+        sample_size=sample_size,
+        n_folds=n_folds,
+        dimensions=dimensions
+    )
+    
+    return optimal_latent_dim
 
 def train(config_path, skip_cv=False, visualize_training=False):
     """
@@ -19,13 +49,17 @@ def train(config_path, skip_cv=False, visualize_training=False):
     with open(config_path, 'r') as f:
         config = yaml.safe_load(f)
     
-    # Create necessary directories
-    os.makedirs('checkpoints', exist_ok=True)
-    os.makedirs('analysis', exist_ok=True)
+    # Run cross-validation if not skipped
+    if not skip_cv:
+        optimal_latent_dim = run_cross_validation(config, visualize_training=visualize_training)
+        print(f"\nUsing optimal latent dimension from cross-validation: {optimal_latent_dim}")
+        
+        # Update config with optimal latent dimension
+        config['model']['latent_dim'] = optimal_latent_dim
     
     # Initialize and start training
-    trainer = Trainer(config, skip_cv=skip_cv, visualize_training=visualize_training)
-    trainer.train()
+    trainer = Trainer(config, visualize_training=visualize_training)
+    trainer.train_model()
 
 def launch_gui():
     """

@@ -9,24 +9,33 @@ class Encoder(nn.Module):
         self.latent_dim = latent_dim
         self.input_size = input_size
         
-        # Progressive channel scaling
-        hidden_dims = [32, 64, 128, 256, 512]
-        in_channels = input_channels
-        modules = []
-        
-        # Build encoder layers dynamically
-        for h_dim in hidden_dims:
-            modules.append(
-                nn.Sequential(
-                    nn.Conv2d(in_channels, out_channels=h_dim,
-                             kernel_size=3, stride=2, padding=1),
-                    nn.BatchNorm2d(h_dim),
-                    nn.LeakyReLU()
-                )
-            )
-            in_channels = h_dim
-        
-        self.encoder = nn.Sequential(*modules)
+        # Explicit encoder layers
+        self.encoder = nn.Sequential(
+            # Layer 1: 3 -> 32
+            nn.Conv2d(input_channels, 32, kernel_size=3, stride=2, padding=1),
+            nn.BatchNorm2d(32),
+            nn.LeakyReLU(),
+            
+            # Layer 2: 32 -> 64
+            nn.Conv2d(32, 64, kernel_size=3, stride=2, padding=1),
+            nn.BatchNorm2d(64),
+            nn.LeakyReLU(),
+            
+            # Layer 3: 64 -> 128
+            nn.Conv2d(64, 128, kernel_size=3, stride=2, padding=1),
+            nn.BatchNorm2d(128),
+            nn.LeakyReLU(),
+            
+            # Layer 4: 128 -> 256
+            nn.Conv2d(128, 256, kernel_size=3, stride=2, padding=1),
+            nn.BatchNorm2d(256),
+            nn.LeakyReLU(),
+            
+            # Layer 5: 256 -> 512
+            nn.Conv2d(256, 512, kernel_size=3, stride=2, padding=1),
+            nn.BatchNorm2d(512),
+            nn.LeakyReLU()
+        )
         
         # Calculate the flattened size dynamically
         test_input = torch.rand(1, input_channels, input_size, input_size)
@@ -55,51 +64,44 @@ class Decoder(nn.Module):
         
         self.latent_dim = latent_dim
         self.output_size = output_size
-        
-        # Progressive channel scaling (reversed from encoder)
-        hidden_dims = [512, 256, 128, 64, 32]
-        self.final_dim = hidden_dims[0]
+        self.final_dim = 512
         
         # Calculate initial spatial dimensions
-        test_input = torch.rand(1, output_channels, output_size, output_size)
-        test_encoder = Encoder(latent_dim, output_channels, output_size)
-        with torch.no_grad():
-            test_output = test_encoder.encoder(test_input)
-        self.initial_size = test_output.shape[2]  # Assuming square feature maps
+        # The encoder has 5 layers with stride 2, so we divide by 2^5
+        self.initial_size = output_size // 32  # equivalent to output_size / (2^5)
         
         # Initial projection from latent space
-        self.decoder_input = nn.Linear(latent_dim, hidden_dims[0] * self.initial_size * self.initial_size)
+        self.decoder_input = nn.Linear(latent_dim, self.final_dim * self.initial_size * self.initial_size)
         
-        # Build decoder layers
-        modules = []
-        for i in range(len(hidden_dims) - 1):
-            modules.append(
-                nn.Sequential(
-                    nn.ConvTranspose2d(hidden_dims[i],
-                                     hidden_dims[i + 1],
-                                     kernel_size=3,
-                                     stride=2,
-                                     padding=1,
-                                     output_padding=1),
-                    nn.BatchNorm2d(hidden_dims[i + 1]),
-                    nn.LeakyReLU()
-                )
-            )
-        
-        self.decoder = nn.Sequential(*modules)
+        # Explicit decoder layers
+        self.decoder = nn.Sequential(
+            # Layer 1: 512 -> 256
+            nn.ConvTranspose2d(512, 256, kernel_size=3, stride=2, padding=1, output_padding=1),
+            nn.BatchNorm2d(256),
+            nn.LeakyReLU(),
+            
+            # Layer 2: 256 -> 128
+            nn.ConvTranspose2d(256, 128, kernel_size=3, stride=2, padding=1, output_padding=1),
+            nn.BatchNorm2d(128),
+            nn.LeakyReLU(),
+            
+            # Layer 3: 128 -> 64
+            nn.ConvTranspose2d(128, 64, kernel_size=3, stride=2, padding=1, output_padding=1),
+            nn.BatchNorm2d(64),
+            nn.LeakyReLU(),
+            
+            # Layer 4: 64 -> 32
+            nn.ConvTranspose2d(64, 32, kernel_size=3, stride=2, padding=1, output_padding=1),
+            nn.BatchNorm2d(32),
+            nn.LeakyReLU()
+        )
         
         # Final layer to reconstruct image
         self.final_layer = nn.Sequential(
-            nn.ConvTranspose2d(hidden_dims[-1],
-                              hidden_dims[-1],
-                              kernel_size=3,
-                              stride=2,
-                              padding=1,
-                              output_padding=1),
-            nn.BatchNorm2d(hidden_dims[-1]),
+            nn.ConvTranspose2d(32, 32, kernel_size=3, stride=2, padding=1, output_padding=1),
+            nn.BatchNorm2d(32),
             nn.LeakyReLU(),
-            nn.Conv2d(hidden_dims[-1], out_channels=output_channels,
-                     kernel_size=3, padding=1),
+            nn.Conv2d(32, out_channels=output_channels, kernel_size=3, padding=1),
             nn.Sigmoid()
         )
 

@@ -1,61 +1,58 @@
 model:
-  latent_dim: 128  # Reduced for better interpretability and visualization
+  latent_dim: 128  # Default latent dimension
+  input_channels: 3  # RGB images
 
 data:
   root_dir: "data/celeba/img_align_celeba"
   attr_path: "data/celeba/list_attr_celeba.txt"
   image_size: 128  # Keep this for good face detail
-  input_channels: 3  # RGB images
-
-cross_validation:
-  enabled: true
-  sample_size: 20000  # Keep this for reliable CV
-  n_folds: 5
-  epochs: 5
-  dimensions: [16, 32, 64, 128]  # Focused on smaller, interpretable dimensions
-  batch_size: 128
-  learning_rate: 0.001
-  weight_decay: 0 # L2 regularization
-  kl_weight: 0.00025  
 
 training:
-  num_epochs: 20  # Increased to compensate for smaller latent space
+  # Basic training parameters
+  num_epochs: 5
   batch_size: 128
   learning_rate: 0.001
-  weight_decay: 0 # L2 regularization
-  kl_weight: 0.00025  # Increased to encourage better latent space organization
+  weight_decay: 0  # L2 regularization
+  kl_weight: 0.00025  # KL divergence weight
+  
+  # Cross-validation parameters
+  cross_validation:
+    enabled: true
+    sample_size: 20000  # Number of samples to use for CV
+    n_folds: 5  # Number of folds for k-fold CV
+    dimensions: [64, 128, 256]  # Dimensions to test
+  
+  # Resource utilization
   num_workers: 8
   prefetch_factor: 2
+  
+  # Checkpointing and logging
   save_interval: 10
   checkpoint_dir: "checkpoints"
   log_dir: "logs"
   log_interval: 100
+  save_best_only: true
+  early_stopping_patience: 25
   
-  # Learning rate scheduler settings
+  # Learning rate scheduler
   scheduler:
     name: "plateau"
     params:
       mode: "min"
-      factor: 0.3  # Reduced from 0.5 to make smaller steps
-      patience: 2  # Keep this small since we're seeing clear plateaus
-      threshold: 0.00001  # Made much smaller since loss changes are very small
-      threshold_mode: "rel"  # Added relative mode to make threshold relative to loss
-      cooldown: 1  # Reduced to allow quicker adaptations
-      min_lr: 0.000001  # Keep the minimum learning rate
+      factor: 0.3
+      patience: 2
+      threshold: 0.00001
+      threshold_mode: "rel"
+      cooldown: 1
+      min_lr: 0.000001
   
-  # GPU optimization settings
+  # GPU optimization
   mixed_precision: true
   cudnn_benchmark: true
   multi_gpu: true
   pin_memory: true
-  
-  # Memory optimization
   gradient_accumulation_steps: 1
-  max_grad_norm: 0.5  # Reduced for more stable training with small latent space
-  
-  # Checkpointing
-  save_best_only: true
-  early_stopping_patience: 25  # Increased because convergence might take longer
+  max_grad_norm: 0.5
 
 evaluation:
   metrics:
