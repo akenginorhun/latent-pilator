@@ -4,7 +4,7 @@ model:
 data:
   root_dir: "data/celeba/img_align_celeba"
   attr_path: "data/celeba/list_attr_celeba.txt"
-  image_size: 64  # Keep this for good face detail
+  image_size: 128  # Keep this for good face detail
   input_channels: 3  # RGB images
 
 cross_validation:
@@ -15,15 +15,15 @@ cross_validation:
   dimensions: [16, 32, 64, 128]  # Focused on smaller, interpretable dimensions
   batch_size: 128
   learning_rate: 0.001
-  weight_decay: 0.00001
-  kl_weight: 0.01  # Increased to encourage more structured latent space
+  weight_decay: 0 # L2 regularization
+  kl_weight: 0.00025  
 
 training:
-  num_epochs: 200  # Increased to compensate for smaller latent space
+  num_epochs: 20  # Increased to compensate for smaller latent space
   batch_size: 64
-  learning_rate: 0.003
-  weight_decay: 0.00001
-  kl_weight: 0.005  # Increased to encourage better latent space organization
+  learning_rate: 0.001
+  weight_decay: 0 # L2 regularization
+  kl_weight: 0.00025  # Increased to encourage better latent space organization
   num_workers: 8
   prefetch_factor: 2
   save_interval: 10
@@ -36,11 +36,12 @@ training:
     name: "plateau"
     params:
       mode: "min"
-      factor: 0.3  # More aggressive reduction for finer convergence
-      patience: 3  # Increased because smaller latent space needs more time
-      threshold: 0.001  # Changed from 1e-3 to explicit decimal
-      cooldown: 5  # Increased to allow better adaptation
-      min_lr: 0.000001  # Changed from 1e-6 to explicit decimal
+      factor: 0.3  # Reduced from 0.5 to make smaller steps
+      patience: 2  # Keep this small since we're seeing clear plateaus
+      threshold: 0.00001  # Made much smaller since loss changes are very small
+      threshold_mode: "rel"  # Added relative mode to make threshold relative to loss
+      cooldown: 1  # Reduced to allow quicker adaptations
+      min_lr: 0.000001  # Keep the minimum learning rate
   
   # GPU optimization settings
   mixed_precision: true

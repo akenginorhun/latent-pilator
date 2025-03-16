@@ -16,7 +16,7 @@ import yaml
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from models.autoencoder import VAE
-from data.dataset import CelebADataset
+from data.dataset import CelebADataset, get_transforms
 
 class LatentPilatorGUI(QMainWindow):
     def __init__(self):
@@ -28,12 +28,10 @@ class LatentPilatorGUI(QMainWindow):
         with open('configs/config.yaml', 'r') as f:
             self.config = yaml.safe_load(f)
         
-        # Initialize image processing transform
-        self.transform = transforms.Compose([
-            transforms.Resize((self.config['data']['image_size'], self.config['data']['image_size'])),
-            transforms.ToTensor(),
-            transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
-        ])
+        # Initialize image processing transforms
+        self.input_transform, self.output_transform = get_transforms(
+            image_size=self.config['data']['image_size']
+        )
         
         # Load model and analysis results
         self.load_model_and_directions()
@@ -45,7 +43,7 @@ class LatentPilatorGUI(QMainWindow):
         self.dataset = CelebADataset(
             root_dir='data/celeba/img_align_celeba',
             attr_path='data/celeba/list_attr_celeba.txt',
-            transform=self.transform
+            transform=self.input_transform
         )
         
         # Initialize UI

@@ -12,6 +12,7 @@ import argparse
 import matplotlib.pyplot as plt
 import numpy as np
 import random
+import torch.nn.functional as F
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -98,8 +99,6 @@ class Trainer:
         
         self.model = self.model.to(self.device)
         
-        # We'll create MSELoss once here (rather than inside the loop)
-        self.recon_criterion = nn.MSELoss()
         
         # TensorBoard writer
         self.writer = SummaryWriter(config['training']['log_dir'])
@@ -148,6 +147,30 @@ class Trainer:
             self.fig.canvas.draw()
             self.fig.canvas.flush_events()
             plt.pause(0.01)  # Small pause to allow plot to update
+
+    def compute_loss(self, recon_batch, images, mu, log_var, batch_size):
+        """
+        Compute the VAE loss function.
+        Args:
+            recon_batch: The reconstructed images
+            images: The original input images
+            mu: The mean of the latent distribution
+            log_var: The log variance of the latent distribution
+            batch_size: The batch size for proper normalization
+            
+        Returns:
+            tuple: (total_loss, reconstruction_loss, kl_divergence_loss)
+        """
+        # Compute reconstruction loss (MSE) on flattened tensors
+        recon_loss = F.mse_loss(recon_batch.view(batch_size, -1), images.view(batch_size, -1))
+        
+        # Compute KL divergence loss using mean instead of sum/batch_size
+        kl_loss = -0.5 * torch.mean(1 + log_var - mu.pow(2) - log_var.exp())
+        
+        # Compute total loss with KL weight
+        total_loss = recon_loss + self.config['training']['kl_weight'] * kl_loss
+        
+        return total_loss, recon_loss, kl_loss
 
     def train_model(self, model):
         """
@@ -232,10 +255,7 @@ class Trainer:
                 if scaler is not None:
                     with torch.cuda.amp.autocast():
                         recon_batch, mu, log_var = model(images)
-                        recon_loss = self.recon_criterion(recon_batch, images)
-                        # Normalize KL loss by batch size
-                        kl_loss = -0.5 * torch.sum(1 + log_var - mu.pow(2) - log_var.exp()) / batch_size
-                        loss = recon_loss + self.config['training']['kl_weight'] * kl_loss
+                        loss, recon_loss, kl_loss = self.compute_loss(recon_batch, images, mu, log_var, batch_size)
                     
                     # Scale the loss, then backward
                     scaler.scale(loss).backward()
@@ -253,10 +273,7 @@ class Trainer:
                 else:
                     # Regular FP32 training (CPU or MPS)
                     recon_batch, mu, log_var = model(images)
-                    recon_loss = self.recon_criterion(recon_batch, images)
-                    # Normalize KL loss by batch size
-                    kl_loss = -0.5 * torch.sum(1 + log_var - mu.pow(2) - log_var.exp()) / batch_size
-                    loss = recon_loss + self.config['training']['kl_weight'] * kl_loss
+                    loss, recon_loss, kl_loss = self.compute_loss(recon_batch, images, mu, log_var, batch_size)
                     loss.backward()
                     
                     # Gradient clipping if configured

@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+from data.dataset import get_transforms
 
 class Encoder(nn.Module):
     def __init__(self, latent_dim=32, input_channels=3, input_size=64):
@@ -8,35 +9,31 @@ class Encoder(nn.Module):
         self.latent_dim = latent_dim
         self.input_size = input_size
         
-        # Calculate number of downsampling steps needed
-        n_downsample = max(2, min(5, (input_size - 1).bit_length() - 3))  # Automatically determine number of layers
-        
-        # Calculate dimensions for each layer
-        dims = []
-        current_dim = input_size
-        base_channels = 32  # Base number of channels
-        channels = [input_channels] + [min(base_channels * (2**i), 512) for i in range(n_downsample)]
-        
-        for i in range(len(channels)-1):
-            # Calculate output dimension after conv layer
-            # Formula: output_size = (input_size + 2*padding - kernel_size) / stride + 1
-            current_dim = (current_dim + 2*1 - 4) // 2 + 1
-            dims.append(current_dim)
+        # Progressive channel scaling
+        hidden_dims = [32, 64, 128, 256, 512]
+        in_channels = input_channels
+        modules = []
         
         # Build encoder layers dynamically
-        layers = []
-        for i in range(len(channels)-1):
-            layers.extend([
-                nn.Conv2d(channels[i], channels[i+1], kernel_size=4, stride=2, padding=1),
-                nn.BatchNorm2d(channels[i+1]),
-                nn.LeakyReLU(0.2)
-            ])
+        for h_dim in hidden_dims:
+            modules.append(
+                nn.Sequential(
+                    nn.Conv2d(in_channels, out_channels=h_dim,
+                             kernel_size=3, stride=2, padding=1),
+                    nn.BatchNorm2d(h_dim),
+                    nn.LeakyReLU()
+                )
+            )
+            in_channels = h_dim
         
-        self.encoder = nn.Sequential(*layers)
+        self.encoder = nn.Sequential(*modules)
         
-        # Calculate the flattened size based on the final feature map size
-        self.flattened_size = channels[-1] * dims[-1] * dims[-1]
+        # Calculate the flattened size dynamically
+        test_input = torch.rand(1, input_channels, input_size, input_size)
+        test_output = self.encoder(test_input)
+        self.flattened_size = test_output.shape[1] * test_output.shape[2] * test_output.shape[3]
         
+        # Projection to latent space
         self.fc_mu = nn.Linear(self.flattened_size, latent_dim)
         self.fc_var = nn.Linear(self.flattened_size, latent_dim)
 
@@ -59,43 +56,59 @@ class Decoder(nn.Module):
         self.latent_dim = latent_dim
         self.output_size = output_size
         
-        # Calculate number of upsampling steps needed
-        n_upsample = max(2, min(5, (output_size - 1).bit_length() - 3))  # Match encoder's downsample count
+        # Progressive channel scaling (reversed from encoder)
+        hidden_dims = [512, 256, 128, 64, 32]
+        self.final_dim = hidden_dims[0]
         
-        # Calculate dimensions for each layer
-        dims = []
-        current_dim = output_size
-        for _ in range(n_upsample):  # Working backwards from output size
-            current_dim = (current_dim + 2*1 - 4) // 2 + 1
+        # Calculate initial spatial dimensions
+        test_input = torch.rand(1, output_channels, output_size, output_size)
+        test_encoder = Encoder(latent_dim, output_channels, output_size)
+        with torch.no_grad():
+            test_output = test_encoder.encoder(test_input)
+        self.initial_size = test_output.shape[2]  # Assuming square feature maps
         
-        # Initial dimension after reshape from latent space
-        self.initial_dim = current_dim
-        base_channels = 32  # Base number of channels
-        channels = [min(base_channels * (2**(n_upsample-1)), 512)] + \
-                  [min(base_channels * (2**i), 512) for i in range(n_upsample-2, -1, -1)] + \
-                  [output_channels]
+        # Initial projection from latent space
+        self.decoder_input = nn.Linear(latent_dim, hidden_dims[0] * self.initial_size * self.initial_size)
         
-        # Calculate initial feature map size
-        self.initial_size = (channels[0], self.initial_dim, self.initial_dim)
+        # Build decoder layers
+        modules = []
+        for i in range(len(hidden_dims) - 1):
+            modules.append(
+                nn.Sequential(
+                    nn.ConvTranspose2d(hidden_dims[i],
+                                     hidden_dims[i + 1],
+                                     kernel_size=3,
+                                     stride=2,
+                                     padding=1,
+                                     output_padding=1),
+                    nn.BatchNorm2d(hidden_dims[i + 1]),
+                    nn.LeakyReLU()
+                )
+            )
         
-        self.fc = nn.Linear(latent_dim, self.initial_size[0] * self.initial_size[1] * self.initial_size[2])
+        self.decoder = nn.Sequential(*modules)
         
-        # Build decoder layers dynamically
-        layers = []
-        for i in range(len(channels)-1):
-            layers.extend([
-                nn.ConvTranspose2d(channels[i], channels[i+1], kernel_size=4, stride=2, padding=1),
-                nn.BatchNorm2d(channels[i+1]) if i < len(channels)-2 else nn.Identity(),  # No BatchNorm in last layer
-                nn.ReLU() if i < len(channels)-2 else nn.Tanh()  # Tanh in last layer
-            ])
-        
-        self.decoder = nn.Sequential(*layers)
+        # Final layer to reconstruct image
+        self.final_layer = nn.Sequential(
+            nn.ConvTranspose2d(hidden_dims[-1],
+                              hidden_dims[-1],
+                              kernel_size=3,
+                              stride=2,
+                              padding=1,
+                              output_padding=1),
+            nn.BatchNorm2d(hidden_dims[-1]),
+            nn.LeakyReLU(),
+            nn.Conv2d(hidden_dims[-1], out_channels=output_channels,
+                     kernel_size=3, padding=1),
+            nn.Sigmoid()
+        )
 
     def forward(self, z):
-        x = self.fc(z)
-        x = x.view(x.size(0), *self.initial_size)
-        x = self.decoder(x)
-        return x
+        result = self.decoder_input(z)
+        result = result.view(-1, self.final_dim, self.initial_size, self.initial_size)
+        result = self.decoder(result)
+        result = self.final_layer(result)
+        return result
 
 class VAE(nn.Module):
     def __init__(self, latent_dim=32, input_channels=3, image_size=64):
@@ -103,29 +116,34 @@ class VAE(nn.Module):
         self.encoder = Encoder(latent_dim, input_channels, image_size)
         self.decoder = Decoder(latent_dim, input_channels, image_size)
         self.latent_dim = latent_dim
+        self.image_size = image_size
+        
+        # Get transforms
+        self.input_transform, self.output_transform = get_transforms(image_size)
 
     def forward(self, x):
+        # Apply input transform if x is not already a tensor
+        if not isinstance(x, torch.Tensor):
+            x = self.input_transform(x)
+        
         mu, log_var = self.encoder(x)
         z = self.encoder.reparameterize(mu, log_var)
-        return self.decoder(z), mu, log_var
+        return self.decode(z), mu, log_var
 
     def encode(self, x):
+        # Apply input transform if x is not already a tensor
+        if not isinstance(x, torch.Tensor):
+            x = self.input_transform(x)
+            
         mu, log_var = self.encoder(x)
         return self.encoder.reparameterize(mu, log_var)
 
     def decode(self, z):
-        return self.decoder(z)
-
-    def interpolate(self, x1, x2, steps=10):
-        z1 = self.encode(x1.unsqueeze(0))
-        z2 = self.encode(x2.unsqueeze(0))
-        alpha = torch.linspace(0, 1, steps)
-        z = torch.zeros(steps, self.latent_dim)
-        
-        for i, a in enumerate(alpha):
-            z[i] = a * z2 + (1-a) * z1
-            
-        return self.decode(z)
+        result = self.decoder(z)
+        # Apply output transform
+        if self.output_transform is not None:
+            result = self.output_transform(result)
+        return result
 
     def manipulate_latent(self, x, direction, strength):
         """
@@ -136,6 +154,10 @@ class VAE(nn.Module):
             direction (torch.Tensor): Direction in latent space
             strength (float): Strength of manipulation
         """
+        # Apply input transform if x is not already a tensor
+        if not isinstance(x, torch.Tensor):
+            x = self.input_transform(x)
+            
         z = self.encode(x.unsqueeze(0))
         z_new = z + direction * strength
         return self.decode(z_new) 
