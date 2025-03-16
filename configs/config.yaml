@@ -1,5 +1,5 @@
 model:
-  latent_dim: 32  # Reduced for better interpretability and visualization
+  latent_dim: 128  # Reduced for better interpretability and visualization
 
 data:
   root_dir: "data/celeba/img_align_celeba"
@@ -20,7 +20,7 @@ cross_validation:
 
 training:
   num_epochs: 20  # Increased to compensate for smaller latent space
-  batch_size: 64
+  batch_size: 128
   learning_rate: 0.001
   weight_decay: 0 # L2 regularization
   kl_weight: 0.00025  # Increased to encourage better latent space organization
