@@ -1,0 +1,22 @@
+name: latent-pilator
+channels:
+  - pytorch
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.9
+  - pip
+  - pytorch
+  - torchvision
+  - numpy
+  - pyyaml
+  - pyqt=5
+  - pandas
+  - scipy
+  - tensorboard
+  - scikit-learn
+  - pip:
+    - pillow
+    - matplotlib
+    - tqdm
+    - opencv-python 

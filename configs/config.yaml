@@ -1,0 +1,65 @@
+model:
+  latent_dim: 32  # Reduced for better interpretability and visualization
+
+data:
+  root_dir: "data/celeba/img_align_celeba"
+  attr_path: "data/celeba/list_attr_celeba.txt"
+  image_size: 64  # Keep this for good face detail
+  input_channels: 3  # RGB images
+
+cross_validation:
+  enabled: true
+  sample_size: 20000  # Keep this for reliable CV
+  n_folds: 5
+  epochs: 5
+  dimensions: [16, 32, 64, 128]  # Focused on smaller, interpretable dimensions
+  batch_size: 128
+  learning_rate: 0.001
+  weight_decay: 0.00001
+  kl_weight: 0.01  # Increased to encourage more structured latent space
+
+training:
+  num_epochs: 200  # Increased to compensate for smaller latent space
+  batch_size: 64
+  learning_rate: 0.003
+  weight_decay: 0.00001
+  kl_weight: 0.005  # Increased to encourage better latent space organization
+  num_workers: 8
+  prefetch_factor: 2
+  save_interval: 10
+  checkpoint_dir: "checkpoints"
+  log_dir: "logs"
+  log_interval: 100
+  
+  # Learning rate scheduler settings
+  scheduler:
+    name: "plateau"
+    params:
+      mode: "min"
+      factor: 0.3  # More aggressive reduction for finer convergence
+      patience: 3  # Increased because smaller latent space needs more time
+      threshold: 0.001  # Changed from 1e-3 to explicit decimal
+      cooldown: 5  # Increased to allow better adaptation
+      min_lr: 0.000001  # Changed from 1e-6 to explicit decimal
+  
+  # GPU optimization settings
+  mixed_precision: true
+  cudnn_benchmark: true
+  multi_gpu: true
+  pin_memory: true
+  
+  # Memory optimization
+  gradient_accumulation_steps: 1
+  max_grad_norm: 0.5  # Reduced for more stable training with small latent space
+  
+  # Checkpointing
+  save_best_only: true
+  early_stopping_patience: 25  # Increased because convergence might take longer
+
+evaluation:
+  metrics:
+    - "psnr"
+    - "ssim"
+    - "mse"
+  validation_interval: 1
+  validation_split: 0.1 
