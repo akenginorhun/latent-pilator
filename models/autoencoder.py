@@ -147,6 +147,32 @@ class VAE(nn.Module):
             result = self.output_transform(result)
         return result
 
+    def extract_attribute_vector(self, images_with_attr, images_without_attr):
+        """
+        Extract the attribute vector by computing the difference between the mean latent
+        representations of images with and without a specific attribute.
+        
+        Args:
+            images_with_attr (torch.Tensor): Batch of images with the attribute
+            images_without_attr (torch.Tensor): Batch of images without the attribute
+            
+        Returns:
+            torch.Tensor: The attribute vector in latent space
+        """
+        with torch.no_grad():
+            # Encode both sets of images
+            z_with_attr = self.encode(images_with_attr)
+            z_without_attr = self.encode(images_without_attr)
+            
+            # Compute mean latent vectors
+            mean_with_attr = torch.mean(z_with_attr, dim=0)
+            mean_without_attr = torch.mean(z_without_attr, dim=0)
+            
+            # Compute attribute vector as the difference
+            attribute_vector = mean_with_attr - mean_without_attr
+            
+            return attribute_vector
+
     def manipulate_latent(self, x, direction, strength):
         """
         Manipulate the latent representation along a specific direction

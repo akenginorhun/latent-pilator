@@ -16,7 +16,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from models.autoencoder import VAE
 from data.dataset import get_celeba_dataloader
-from utils.metrics import compute_metrics
+from utils import metrics
 
 class Trainer:
     def __init__(self, config, visualize_training=False):
@@ -140,7 +140,7 @@ class Trainer:
         Returns:
             float: A weighted composite score that considers all metrics
         """
-        metrics = compute_metrics.evaluate_vae_performance(
+        metrics = metrics.evaluate_vae_performance(
             model=model,
             data_loader=val_loader,
             device=self.device

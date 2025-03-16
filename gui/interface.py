@@ -17,6 +17,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from models.autoencoder import VAE
 from data.dataset import CelebADataset, get_transforms
+from utils.metrics import compute_attribute_vectors
 
 class LatentPilatorGUI(QMainWindow):
     def __init__(self):
@@ -140,10 +141,19 @@ class LatentPilatorGUI(QMainWindow):
                 self.model = self.model.to(self.device)
                 self.model.eval()
                 
-                # Initialize attribute directions
-                self.attribute_directions = torch.eye(latent_dim)
+                # Update status
+                self.status_label.setText("Extracting attribute vectors...")
+                QApplication.processEvents()  # Update GUI
                 
-                # Create sliders after model is loaded
+                # Compute attribute vectors using the metrics function
+                self.attribute_directions = compute_attribute_vectors(
+                    model=self.model,
+                    dataset=self.dataset,
+                    device=self.device,
+                    max_samples=100
+                )
+                
+                # Create sliders for attributes
                 self.create_attribute_sliders(self.right_layout)
                 
                 # Enable buttons
@@ -152,14 +162,6 @@ class LatentPilatorGUI(QMainWindow):
                 
                 # Update status
                 self.status_label.setText("Model loaded successfully")
-                
-                # Load attribute names if available
-                try:
-                    with open('data/celeba/list_attr_celeba.txt', 'r') as f:
-                        next(f)  # Skip number of images
-                        self.attribute_names = next(f).strip().split()
-                except:
-                    self.attribute_names = [f"Dimension {i+1}" for i in range(latent_dim)]
                 
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to load model: {str(e)}")
@@ -171,17 +173,16 @@ class LatentPilatorGUI(QMainWindow):
             layout.itemAt(i).widget().setParent(None)
         
         self.sliders = {}
-        num_latent_dims = self.model.latent_dim
         
-        # Create a slider for each latent dimension
-        for i in range(num_latent_dims):
+        # Create a slider for each attribute
+        for attr_name in self.attribute_directions.keys():
             container = QWidget()
             container_layout = QHBoxLayout(container)
             container_layout.setContentsMargins(5, 5, 5, 5)
             
-            # Label for dimension
-            label = QLabel(f"Dim {i+1}")
-            label.setFixedWidth(50)
+            # Label for attribute
+            label = QLabel(attr_name.replace('_', ' ').title())
+            label.setFixedWidth(150)
             container_layout.addWidget(label)
             
             # Slider
@@ -195,7 +196,7 @@ class LatentPilatorGUI(QMainWindow):
             container_layout.addWidget(slider)
             
             layout.addWidget(container)
-            self.sliders[i] = slider
+            self.sliders[attr_name] = slider
         
         # Add stretch at the end to keep sliders at the top
         layout.addStretch()
@@ -235,9 +236,9 @@ class LatentPilatorGUI(QMainWindow):
         # Create manipulation vector based on slider values
         manipulation = torch.zeros_like(self.latent_vector)
         
-        for dim, slider in self.sliders.items():
+        for attr_name, slider in self.sliders.items():
             value = slider.value() / 100.0  # Normalize to [-1, 1]
-            direction = self.attribute_directions[dim].to(self.device)
+            direction = self.attribute_directions[attr_name].to(self.device)
             manipulation += value * direction
         
         # Apply manipulation

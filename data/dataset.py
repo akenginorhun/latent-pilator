@@ -1,6 +1,6 @@
 import os
 import torch
-from torch.utils.data import Dataset, DataLoader, random_split
+from torch.utils.data import Dataset, DataLoader, random_split, Subset
 from torchvision import transforms
 from PIL import Image
 import pandas as pd
@@ -77,6 +77,60 @@ class CelebADataset(Dataset):
         attributes = torch.FloatTensor((self.attr_df.iloc[idx].values + 1) / 2)
         
         return image, attributes
+
+    def get_attribute_images(self, attr_name, max_samples=100):
+        """
+        Get images with and without a specific attribute.
+        
+        Args:
+            attr_name (str): Name of the attribute to collect images for
+            max_samples (int): Maximum number of samples to collect for each category
+            
+        Returns:
+            dict: Dictionary containing lists of images with and without the attribute
+                  Format: {'with': list of images, 'without': list of images}
+                  Returns None if attribute not found
+        """
+        if attr_name not in self.attributes:
+            return None
+            
+        attr_idx = list(self.attributes).index(attr_name)
+        images_with = []
+        images_without = []
+        
+        # Get all indices where attribute is present/absent
+        attr_values = self.attr_df.iloc[:, attr_idx].values
+        with_indices = np.where(attr_values == 1)[0]
+        without_indices = np.where(attr_values == -1)[0]
+        
+        # Randomly sample indices
+        if len(with_indices) > max_samples:
+            with_indices = np.random.choice(with_indices, max_samples, replace=False)
+        if len(without_indices) > max_samples:
+            without_indices = np.random.choice(without_indices, max_samples, replace=False)
+        
+        # Collect images
+        for idx in with_indices:
+            img, _ = self[idx]
+            images_with.append(img)
+            
+        for idx in without_indices:
+            img, _ = self[idx]
+            images_without.append(img)
+            
+        return {
+            'with': torch.stack(images_with) if images_with else None,
+            'without': torch.stack(images_without) if images_without else None
+        }
+
+    def get_attribute_names(self):
+        """
+        Get list of all attribute names in the dataset.
+        
+        Returns:
+            list: List of attribute names
+        """
+        return list(self.attributes)
 
 def get_celeba_dataset(root_dir, attr_path, target_size=(218, 178)):
     """

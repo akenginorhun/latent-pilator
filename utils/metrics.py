@@ -240,4 +240,38 @@ def evaluate_vae_performance(model, data_loader, device, n_interpolation_samples
     all_labels = torch.cat(all_labels, dim=0)
     metrics['latent'].update(compute_latent_space_metrics(all_latent_vectors, all_labels))
     
-    return metrics 
+    return metrics
+
+def compute_attribute_vectors(model, dataset, device='cuda', max_samples=100):
+    """
+    Compute attribute vectors for all attributes in the dataset.
+    
+    Args:
+        model: VAE model
+        dataset: CelebADataset instance
+        device: Device to run computation on
+        max_samples: Maximum number of samples to use per attribute category
+    
+    Returns:
+        dict: Dictionary mapping attribute names to their corresponding vectors
+              Format: {attr_name: vector_tensor}
+    """
+    model.eval()
+    attribute_vectors = {}
+    
+    # Get all attribute names from dataset
+    attribute_names = dataset.attributes
+    
+    for attr_name in attribute_names:
+        # Get images for this attribute using the dataset method
+        print(f"Getting images for {attr_name}")
+        attr_images = dataset.get_attribute_images(attr_name, max_samples=max_samples)
+        
+        # Extract attribute vector using the model
+        print(f"Extracting attribute vector for {attr_name}")
+        attr_vector = model.extract_attribute_vector(
+            attr_images['with'],
+            attr_images['without']
+        )
+        attribute_vectors[attr_name] = attr_vector
+    return attribute_vectors
