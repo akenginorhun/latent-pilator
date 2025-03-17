@@ -15,6 +15,7 @@ dependencies:
   - scipy
   - tensorboard
   - scikit-learn
+  - scikit-image
   - pip:
     - pillow
     - matplotlib

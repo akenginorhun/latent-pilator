@@ -19,7 +19,6 @@ def run_cross_validation(config, visualize_training=False):
     Returns:
         optimal_latent_dim: The best performing latent dimension
     """
-    print("\n=== Starting Cross-Validation Phase ===")
     cross_validator = CrossValidator(config, visualize_training=visualize_training)
     
     # Get cross-validation parameters from config

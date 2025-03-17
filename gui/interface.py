@@ -17,7 +17,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from models.autoencoder import VAE
 from data.dataset import CelebADataset, get_transforms
-from utils.metrics import compute_attribute_vectors
+from utils.analysis import compute_attribute_vectors
 
 class LatentPilatorGUI(QMainWindow):
     def __init__(self):
@@ -126,24 +126,33 @@ class LatentPilatorGUI(QMainWindow):
     def upload_model(self):
         try:
             file_name, _ = QFileDialog.getOpenFileName(self, "Select Model Checkpoint", "", "Checkpoint Files (*.pt);;All Files (*)")
-            if file_name:
-                # Load the checkpoint
-                checkpoint = torch.load(file_name)
+            if not file_name:
+                return
+                
+            # Load the checkpoint
+            try:
+                checkpoint = torch.load(file_name, map_location=self.device)
+                if 'model_state_dict' not in checkpoint:
+                    raise ValueError("Invalid checkpoint format: missing model_state_dict")
+                    
                 latent_dim = checkpoint['model_state_dict']['encoder.fc_mu.weight'].size(0)
                 
                 # Initialize model with correct dimensions
                 self.model = VAE(
                     latent_dim=latent_dim,
                     input_channels=self.config['model']['input_channels'],
-                    image_size=self.config['data']['image_size']
+                    image_size=self.config['data']['image_size'],
+                    config=self.config
                 )
-                self.model.load_state_dict(checkpoint['model_state_dict'])
+                
+                # Load state dict with strict=False to handle potential mismatches
+                self.model.load_state_dict(checkpoint['model_state_dict'], strict=False)
                 self.model = self.model.to(self.device)
                 self.model.eval()
                 
                 # Update status
                 self.status_label.setText("Extracting attribute vectors...")
-                QApplication.processEvents()  # Update GUI
+                QApplication.processEvents()
                 
                 # Compute attribute vectors using the metrics function
                 self.attribute_directions = compute_attribute_vectors(
@@ -163,9 +172,14 @@ class LatentPilatorGUI(QMainWindow):
                 # Update status
                 self.status_label.setText("Model loaded successfully")
                 
+            except (KeyError, RuntimeError) as e:
+                raise ValueError(f"Error loading model checkpoint: {str(e)}")
+                
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to load model: {str(e)}")
             self.status_label.setText("Error loading model")
+            self.model = None
+            self.attribute_directions = None
     
     def create_attribute_sliders(self, layout):
         # Clear existing sliders

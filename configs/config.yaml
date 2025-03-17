@@ -32,13 +32,12 @@ training:
   log_dir: "logs"
   log_interval: 100
   save_best_only: true
-  early_stopping_patience: 25
   
   # Learning rate scheduler
   scheduler:
     name: "plateau"
     params:
-      mode: "min"
+      mode: "min"  # Lower loss is better
       factor: 0.3
       patience: 2
       threshold: 0.00001
@@ -47,7 +46,6 @@ training:
       min_lr: 0.000001
   
   # GPU optimization
-  mixed_precision: true
   cudnn_benchmark: true
   multi_gpu: true
   pin_memory: true

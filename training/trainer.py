@@ -4,7 +4,6 @@ import platform
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from torch.utils.data import DataLoader
 from tqdm import tqdm
 import matplotlib.pyplot as plt
 import numpy as np
@@ -16,7 +15,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from models.autoencoder import VAE
 from data.dataset import get_celeba_dataloader
-from utils import metrics
+from utils.analysis import evaluate_vae_performance
 
 class Trainer:
     def __init__(self, config, visualize_training=False):
@@ -78,7 +77,8 @@ class Trainer:
         self.model = VAE(
             latent_dim=config['model']['latent_dim'],
             input_channels=config['model']['input_channels'],
-            image_size=config['data']['image_size']
+            image_size=config['data']['image_size'],
+            config=config  # Pass the configuration
         )
         
         # Multi-GPU if available (DataParallel). For better speed, consider DistributedDataParallel.
@@ -133,59 +133,41 @@ class Trainer:
         
         return total_loss, recon_loss, kl_loss
 
-    def evaluate_model(self, model, val_loader):
+    def evaluate_model(self, model, print_metrics=False):
         """
         Evaluate model performance using comprehensive metrics
         
         Returns:
-            float: A weighted composite score that considers all metrics
+            float: A composite score that considers both reconstruction and latent space metrics.
+                  Higher scores indicate better performance.
         """
-        evaluation_metrics = metrics.evaluate_vae_performance(
+        # Evaluate using the comprehensive evaluation function
+        evaluation_metrics = evaluate_vae_performance(
             model=model,
-            data_loader=val_loader,
             device=self.device
         )
         
         # Print detailed metrics
-        print("\nEvaluation Metrics:")
-        print("Reconstruction:")
-        print(f"  MSE: {evaluation_metrics['reconstruction']['mse']:.4f}")
-        print(f"  PSNR: {evaluation_metrics['reconstruction']['psnr']:.2f}")
-        print(f"  SSIM: {evaluation_metrics['reconstruction']['ssim']:.4f}")
-        print("\nLatent Space:")
-        print(f"  KL Divergence: {evaluation_metrics['latent']['kl_divergence']:.4f}")
-        print(f"  Variance Explained: {evaluation_metrics['latent']['latent_variance_explained']:.4f}")
-        if 'silhouette_score' in evaluation_metrics['latent']:
-            print(f"  Silhouette Score: {evaluation_metrics['latent']['silhouette_score']:.4f}")
-        print(f"  Avg Pairwise Distance: {evaluation_metrics['latent']['avg_pairwise_distance']:.4f}")
-        print("\nInterpolation:")
-        print(f"  Smoothness: {evaluation_metrics['interpolation']['smoothness']:.4f}")
+        if print_metrics:
+            print("\nEvaluation Metrics:")
+            print("Reconstruction:")
+            print(f"  MSE: {evaluation_metrics['reconstruction']['mse']:.4f}")
+            print(f"  SSIM: {evaluation_metrics['reconstruction']['ssim']:.4f}")
+            print(f"  KL Divergence: {evaluation_metrics['reconstruction']['kl_div']:.4f}")
+            print("\nLatent Space:")
+            print(f"  Clustering Score: {evaluation_metrics['latent']['clustering']:.4f}")
+            print(f"  Separability: {evaluation_metrics['latent']['separability']:.4f}")
+            print(f"  Consistency: {evaluation_metrics['latent']['consistency']:.4f}")
         
         # Compute weighted composite score
-        # You can adjust these weights based on what aspects are most important
-        weights = {
-            'reconstruction': {
-                'mse': -1.0,  # Negative because lower is better
-                'psnr': 0.3,
-                'ssim': 0.3
-            },
-            'latent': {
-                'kl_divergence': -0.2,  # Negative because lower is better
-                'latent_variance_explained': 0.2,
-                'avg_pairwise_distance': 0.1
-            },
-            'interpolation': {
-                'smoothness': -0.1  # Negative because lower is better
-            }
-        }
+        # We'll use the pre-computed scores from evaluate_vae_performance
+        # which are already normalized between 0 and 1
+        composite_score = (
+            0.5 * evaluation_metrics['reconstruction']['score'] +  # Reconstruction score (higher is better)
+            0.5 * evaluation_metrics['latent']['score']           # Latent space score (higher is better)
+        )
         
-        composite_score = 0.0
-        for category in weights:
-            for metric, weight in weights[category].items():
-                if metric in evaluation_metrics[category]:
-                    composite_score += evaluation_metrics[category][metric] * weight
-        
-        return composite_score  # Lower score is better
+        return composite_score
 
     def save_final_model(self):
         """
@@ -201,14 +183,12 @@ class Trainer:
         torch.save(model_to_save.state_dict(), save_path)
         print(f"\nFinal model saved to: {save_path}")
 
-    def train_model(self, train_loader=None, val_loader=None, num_epochs=None):
+    def train_model(self, train_loader=None, num_epochs=None):
         """
         Train the model with the given parameters.
         """
         if train_loader is None:
             train_loader = self.train_loader
-        if val_loader is None:
-            val_loader = self.val_loader
         if num_epochs is None:
             num_epochs = self.config['training']['num_epochs']
         
@@ -218,10 +198,6 @@ class Trainer:
             weight_decay=self.config['training']['weight_decay']
         )
         
-        # Initialize mixed precision scaler if on CUDA
-        scaler = torch.cuda.amp.GradScaler() if (self.device.type == 'cuda' and 
-                self.config['training']['mixed_precision']) else None
-        
         # Initialize learning rate scheduler
         scheduler = None
         scheduler_config = self.config['training'].get('scheduler', {})
@@ -230,9 +206,6 @@ class Trainer:
                 optimizer,
                 **scheduler_config.get('params', {})
             )
-        
-        best_loss = float('inf')
-        patience_counter = 0
         
         for epoch in range(num_epochs):
             self.model.train()
@@ -253,33 +226,17 @@ class Trainer:
                 
                 optimizer.zero_grad()
                 
-                if scaler is not None:
-                    with torch.cuda.amp.autocast():
-                        recon_batch, mu, log_var = self.model(images)
-                        loss, recon_loss, kl_loss = self.compute_loss(
-                            recon_batch, images, mu, log_var, batch_size
-                        )
-                    scaler.scale(loss).backward()
-                    if 'max_grad_norm' in self.config['training']:
-                        scaler.unscale_(optimizer)
-                        torch.nn.utils.clip_grad_norm_(
-                            self.model.parameters(),
-                            self.config['training']['max_grad_norm']
-                        )
-                    scaler.step(optimizer)
-                    scaler.update()
-                else:
-                    recon_batch, mu, log_var = self.model(images)
-                    loss, recon_loss, kl_loss = self.compute_loss(
-                        recon_batch, images, mu, log_var, batch_size
+                recon_batch, mu, log_var = self.model(images)
+                loss, recon_loss, kl_loss = self.compute_loss(
+                    recon_batch, images, mu, log_var, batch_size
+                )
+                loss.backward()
+                if 'max_grad_norm' in self.config['training']:
+                    torch.nn.utils.clip_grad_norm_(
+                        self.model.parameters(),
+                        self.config['training']['max_grad_norm']
                     )
-                    loss.backward()
-                    if 'max_grad_norm' in self.config['training']:
-                        torch.nn.utils.clip_grad_norm_(
-                            self.model.parameters(),
-                            self.config['training']['max_grad_norm']
-                        )
-                    optimizer.step()
+                optimizer.step()
                 
                 total_loss += loss.item()
                 
@@ -293,23 +250,15 @@ class Trainer:
             
             avg_loss = total_loss / len(train_loader)
             
-            if val_loader is not None:
-                val_loss = self.evaluate_model(self.model, val_loader)
-                print(f'====> Epoch: {epoch+1} Average loss: {avg_loss:.4f} Val loss: {val_loss:.4f}')
-                
-                if scheduler is not None:
-                    if isinstance(scheduler, optim.lr_scheduler.ReduceLROnPlateau):
-                        scheduler.step(val_loss)
-                
-                if val_loss < best_loss:
-                    best_loss = val_loss
-                    patience_counter = 0
-                else:
-                    patience_counter += 1
-                    if patience_counter >= self.config['training'].get('early_stopping_patience', float('inf')):
-                        print(f"\nEarly stopping triggered after {epoch + 1} epochs!")
-                        break
-        
+            # Update scheduler with training loss
+            if scheduler is not None:
+                if isinstance(scheduler, optim.lr_scheduler.ReduceLROnPlateau):
+                    scheduler.step(avg_loss)  # Use average training loss
+            
+            # Evaluate and print metrics every epoch
+            val_score = self.evaluate_model(model=self.model, print_metrics=True)
+            print(f'====> Epoch: {epoch+1} Average loss: {avg_loss:.4f} Validation score: {val_score:.4f}')
+
         # Save the final trained model
         self.save_final_model()
         return self.model

@@ -9,6 +9,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from data.dataset import get_celeba_dataloader
 from training.trainer import Trainer
+from utils.analysis import evaluate_vae_performance
 
 class CrossValidator:
     def __init__(self, config, visualize_training=False):
@@ -19,7 +20,6 @@ class CrossValidator:
             config: Dictionary containing configuration parameters
             visualize_training: Whether to visualize training progress
         """
-        print("\n=== Initializing CrossValidator ===")
         self.config = config
         self.visualize_training = visualize_training
         
@@ -51,7 +51,7 @@ class CrossValidator:
         Run k-fold cross-validation to find optimal latent dimension.
         Returns the dimension with best average performance across folds.
         """
-        print("\nStarting Cross-Validation")
+        print("\n=== Starting Cross-Validation ===")
         
         # Setup
         sampled_dataset = self.sample_dataset(sample_size)
@@ -60,10 +60,12 @@ class CrossValidator:
         
         # Results storage
         results = {}
+        detailed_results = {}
         
         for dim in dimensions:
             print(f"\nTesting Latent Dimension: {dim}")
             fold_scores = []
+            fold_details = []
             
             for fold, (train_idx, val_idx) in enumerate(kf.split(indices)):
                 print(f"Fold {fold + 1}/{n_folds}")
@@ -90,20 +92,41 @@ class CrossValidator:
                 cv_config['model'] = self.config['model'].copy()  # Deep copy the model config
                 cv_config['model']['latent_dim'] = dim
                 cv_config['model']['input_channels'] = self.config['model'].get('input_channels', 3)
-                cv_config['model']['image_size'] = self.config['data']['image_size']  # Ensure image size is passed
+                cv_config['model']['image_size'] = self.config['data']['image_size']
                 
                 # Create trainer for this fold with visualization parameter
                 trainer = Trainer(cv_config, visualize_training=self.visualize_training)
                 
                 # Train and evaluate
-                model = trainer.train_model(train_loader=train_loader, val_loader=val_loader)
-                val_score = trainer.evaluate_model(model, val_loader)
-                fold_scores.append(val_score)
+                model = trainer.train_model(train_loader=train_loader)
+                
+                # Evaluate using the comprehensive evaluation function
+                eval_results = evaluate_vae_performance(model, print_metrics=False)
+                fold_score = (eval_results['reconstruction']['score'] + eval_results['latent']['score']) / 2
+                fold_scores.append(fold_score)
+                fold_details.append(eval_results)
             
+            # Store average scores and detailed results
             results[dim] = sum(fold_scores) / len(fold_scores)
+            detailed_results[dim] = fold_details
+            
+            # Print detailed results for this dimension
+            print(f"\nResults for dimension {dim}:")
+            print(f"Average Score: {results[dim]:.4f}")
+            print("\nDetailed Metrics:")
+            for fold_idx, details in enumerate(fold_details):
+                print(f"\nFold {fold_idx + 1}:")
+                print(f"Reconstruction Score: {details['reconstruction']['score']:.4f}")
+                print(f"  - MSE: {details['reconstruction']['mse']:.4f}")
+                print(f"  - SSIM: {details['reconstruction']['ssim']:.4f}")
+                print(f"  - KL Divergence: {details['reconstruction']['kl_div']:.4f}")
+                print(f"Latent Space Score: {details['latent']['score']:.4f}")
+                print(f"  - Clustering: {details['latent']['clustering']:.4f}")
+                print(f"  - Separability: {details['latent']['separability']:.4f}")
+                print(f"  - Consistency: {details['latent']['consistency']:.4f}")
         
         # Find best dimension
-        best_dim = min(results.items(), key=lambda x: x[1])[0]
+        best_dim = max(results.items(), key=lambda x: x[1])[0]
         
         # Print summary
         print("\n" + "="*50)
