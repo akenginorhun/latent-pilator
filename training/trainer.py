@@ -140,7 +140,7 @@ class Trainer:
         Returns:
             float: A weighted composite score that considers all metrics
         """
-        metrics = metrics.evaluate_vae_performance(
+        evaluation_metrics = metrics.evaluate_vae_performance(
             model=model,
             data_loader=val_loader,
             device=self.device
@@ -149,17 +149,17 @@ class Trainer:
         # Print detailed metrics
         print("\nEvaluation Metrics:")
         print("Reconstruction:")
-        print(f"  MSE: {metrics['reconstruction']['mse']:.4f}")
-        print(f"  PSNR: {metrics['reconstruction']['psnr']:.2f}")
-        print(f"  SSIM: {metrics['reconstruction']['ssim']:.4f}")
+        print(f"  MSE: {evaluation_metrics['reconstruction']['mse']:.4f}")
+        print(f"  PSNR: {evaluation_metrics['reconstruction']['psnr']:.2f}")
+        print(f"  SSIM: {evaluation_metrics['reconstruction']['ssim']:.4f}")
         print("\nLatent Space:")
-        print(f"  KL Divergence: {metrics['latent']['kl_divergence']:.4f}")
-        print(f"  Variance Explained: {metrics['latent']['latent_variance_explained']:.4f}")
-        if 'silhouette_score' in metrics['latent']:
-            print(f"  Silhouette Score: {metrics['latent']['silhouette_score']:.4f}")
-        print(f"  Avg Pairwise Distance: {metrics['latent']['avg_pairwise_distance']:.4f}")
+        print(f"  KL Divergence: {evaluation_metrics['latent']['kl_divergence']:.4f}")
+        print(f"  Variance Explained: {evaluation_metrics['latent']['latent_variance_explained']:.4f}")
+        if 'silhouette_score' in evaluation_metrics['latent']:
+            print(f"  Silhouette Score: {evaluation_metrics['latent']['silhouette_score']:.4f}")
+        print(f"  Avg Pairwise Distance: {evaluation_metrics['latent']['avg_pairwise_distance']:.4f}")
         print("\nInterpolation:")
-        print(f"  Smoothness: {metrics['interpolation']['smoothness']:.4f}")
+        print(f"  Smoothness: {evaluation_metrics['interpolation']['smoothness']:.4f}")
         
         # Compute weighted composite score
         # You can adjust these weights based on what aspects are most important
@@ -182,8 +182,8 @@ class Trainer:
         composite_score = 0.0
         for category in weights:
             for metric, weight in weights[category].items():
-                if metric in metrics[category]:
-                    composite_score += metrics[category][metric] * weight
+                if metric in evaluation_metrics[category]:
+                    composite_score += evaluation_metrics[category][metric] * weight
         
         return composite_score  # Lower score is better
 

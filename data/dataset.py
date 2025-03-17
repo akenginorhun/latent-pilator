@@ -45,6 +45,7 @@ class CelebADataset(Dataset):
         
         # Read attributes more efficiently
         self.attr_df = pd.read_csv(attr_path, sep='\s+', skiprows=1, memory_map=True)
+        self.attr_index_map = {attr: idx for idx, attr in enumerate(self.attributes)}
         self.img_names = self.attr_df.index.values
         self.attributes = self.attr_df.columns.values
         

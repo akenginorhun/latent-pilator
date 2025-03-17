@@ -242,7 +242,7 @@ def evaluate_vae_performance(model, data_loader, device, n_interpolation_samples
     
     return metrics
 
-def compute_attribute_vectors(model, dataset, device='cuda', max_samples=100):
+def compute_attribute_vectors(model, dataset, device='cuda', max_samples=100, attribute_names=None):
     """
     Compute attribute vectors for all attributes in the dataset.
     
@@ -260,7 +260,8 @@ def compute_attribute_vectors(model, dataset, device='cuda', max_samples=100):
     attribute_vectors = {}
     
     # Get all attribute names from dataset
-    attribute_names = dataset.attributes
+    if attribute_names is None:
+        attribute_names = dataset.attributes
     
     for attr_name in attribute_names:
         # Get images for this attribute using the dataset method

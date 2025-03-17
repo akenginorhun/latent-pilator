@@ -20,7 +20,7 @@ training:
     enabled: true
     sample_size: 20000  # Number of samples to use for CV
     n_folds: 5  # Number of folds for k-fold CV
-    dimensions: [64, 128, 256]  # Dimensions to test
+    dimensions: [16, 32, 64, 128, 256, 512]  # Dimensions to test
   
   # Resource utilization
   num_workers: 8
