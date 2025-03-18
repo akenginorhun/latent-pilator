@@ -147,6 +147,5 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 
 ## Acknowledgments
 - CelebA dataset (http://mmlab.ie.cuhk.edu.hk/projects/CelebA.html)
-- PyTorch team
 - VAE architecture reference: [A Basic Variational Autoencoder in PyTorch Trained on the CelebA Dataset](https://medium.com/the-generator/a-basic-variational-autoencoder-in-pytorch-trained-on-the-celeba-dataset-f29c75316b26)
 - Latent space manipulation approach: [VAE for the CelebA dataset](https://goodboychan.github.io/python/coursera/tensorflow_probability/icl/2021/09/14/03-Variational-AutoEncoder-Celeb-A.html)
