@@ -1,5 +1,7 @@
 # Latent-pilator: Manipulating Facial Images Through Autoencoder Latent Space
 
+This project was developed as a final project for CS131 Computer Vision at Stanford University.
+
 ## Overview
 Latent-pilator is a deep learning project that enables real-time manipulation of facial features through an autoencoder's latent space. The project uses a VAE (Variational Autoencoder) architecture that learns to encode and decode facial images, and allows users to interactively manipulate the facial attributes through the learned latent representations.
 
