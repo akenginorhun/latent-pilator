@@ -15,7 +15,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from models.autoencoder import VAE
 from data.dataset import get_celeba_dataloader
-from utils.analysis import evaluate_vae_performance
+from utils.analysis import evaluate_vae_performance, compute_attribute_vectors
 
 class Trainer:
     def __init__(self, config, visualize_training=False):
@@ -186,6 +186,20 @@ class Trainer:
             'model_state_dict': model_to_save.state_dict(),
             'config': self.config  # Also save the config for reference
         }
+        
+        # Precompute and save attribute vectors if enabled
+        if self.config['training'].get('precompute_vectors', False):
+            print("\nPrecomputing attribute vectors...")
+            attribute_directions = compute_attribute_vectors(
+                model=model_to_save,
+                dataset=self.train_loader.dataset,
+                device=self.device,
+                max_samples=5000,
+                num_attributes=10
+            )
+            save_dict['attribute_directions'] = attribute_directions
+            print("Attribute vectors computed and saved")
+        
         torch.save(save_dict, save_path)
         
         print(f"\nFinal model saved to: {save_path}")

@@ -1,5 +1,5 @@
 model:
-  latent_dim: 64  # Default latent dimension
+  latent_dim: 128  # Default latent dimension
   input_channels: 3  # RGB images
 
 data:
@@ -9,11 +9,12 @@ data:
 
 training:
   # Basic training parameters
-  num_epochs: 5
+  num_epochs: 20
   batch_size: 128
   learning_rate: 0.001
   weight_decay: 0  # L2 regularization
   kl_weight: 0.00025  # KL divergence weight
+  precompute_vectors: true  # Whether to precompute attribute vectors during training
   
   # Cross-validation parameters
   cross_validation:

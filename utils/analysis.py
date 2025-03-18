@@ -84,7 +84,7 @@ def compute_attribute_vectors(model, dataset, device='cuda', max_samples=100, at
         attribute_names = dataset.get_attribute_names()
     
     # Define required attributes that must be included
-    required_attributes = ["Male", "Smiling", "Young", "Bald"]
+    required_attributes = ["Male", "Smiling", "Young", "Bald", "Eyeglasses", "Pale_Skin"]
     
     # If num_attributes is specified, sample remaining attributes
     if num_attributes is not None:

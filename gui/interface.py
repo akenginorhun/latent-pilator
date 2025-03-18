@@ -92,6 +92,12 @@ class LatentPilatorGUI(QMainWindow):
         self.random_btn.setEnabled(False)
         buttons_layout.addWidget(self.random_btn)
         
+        # Upload image button (disabled until model is loaded)
+        self.upload_image_btn = QPushButton("Upload Custom Image")
+        self.upload_image_btn.clicked.connect(self.upload_custom_image)
+        self.upload_image_btn.setEnabled(False)
+        buttons_layout.addWidget(self.upload_image_btn)
+        
         # Reset button (disabled until model is loaded)
         self.reset_btn = QPushButton("Reset Sliders")
         self.reset_btn.clicked.connect(self.reset_sliders)
@@ -151,23 +157,32 @@ class LatentPilatorGUI(QMainWindow):
                 self.model.eval()
                 
                 # Update status
-                self.status_label.setText("Extracting attribute vectors...")
+                self.status_label.setText("Loading attribute vectors...")
                 QApplication.processEvents()
                 
-                # Compute attribute vectors using the metrics function
-                self.attribute_directions = compute_attribute_vectors(
-                    model=self.model,
-                    dataset=self.dataset,
-                    device=self.device,
-                    max_samples=5000,
-                    num_attributes=10
-                )
+                # Check if attribute directions are already in the checkpoint
+                if 'attribute_directions' in checkpoint:
+                    self.status_label.setText("Using pre-computed attribute vectors...")
+                    QApplication.processEvents()
+                    self.attribute_directions = checkpoint['attribute_directions']
+                else:
+                    self.status_label.setText("Computing attribute vectors from scratch...")
+                    QApplication.processEvents()
+                    # Compute attribute vectors using the metrics function
+                    self.attribute_directions = compute_attribute_vectors(
+                        model=self.model,
+                        dataset=self.dataset,
+                        device=self.device,
+                        max_samples=5000,
+                        num_attributes=10
+                    )
                 
                 # Create sliders for attributes
                 self.create_attribute_sliders(self.right_layout)
                 
                 # Enable buttons
                 self.random_btn.setEnabled(True)
+                self.upload_image_btn.setEnabled(True)
                 self.reset_btn.setEnabled(True)
                 
                 # Update status
@@ -288,6 +303,43 @@ class LatentPilatorGUI(QMainWindow):
             return
         for slider in self.sliders.values():
             slider.setValue(0)
+
+    def upload_custom_image(self):
+        if self.model is None:
+            QMessageBox.warning(self, "Warning", "Please load a model first")
+            return
+            
+        try:
+            file_name, _ = QFileDialog.getOpenFileName(
+                self, 
+                "Select Image", 
+                "", 
+                "Image Files (*.png *.jpg *.jpeg *.bmp);;All Files (*)"
+            )
+            if not file_name:
+                return
+                
+            # Load and preprocess the image
+            image = Image.open(file_name).convert('RGB')
+            
+            # Display the original image
+            self.display_image(image, self.original_image)
+            self.current_image = image
+            
+            # Convert to tensor and preprocess
+            img_tensor = self.input_transform(image)
+            
+            # Get latent vector
+            with torch.no_grad():
+                img_tensor = img_tensor.unsqueeze(0).to(self.device)
+                self.latent_vector = self.model.encode(img_tensor)
+                
+            # Generate initial reconstruction
+            self.update_image()
+            
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to load image: {str(e)}")
+            self.status_label.setText("Error loading image")
 
 def main():
     app = QApplication(sys.argv)
