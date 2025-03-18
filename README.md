@@ -43,16 +43,30 @@ conda activate latent-pilator
 
 ## Running the Code
 
-### Training Mode
+The project supports two main modes: training and GUI. Command-line arguments:
+
+- `--mode`: Choose between 'train' or 'gui' (default: 'gui')
+- `--config`: Path to configuration file (default: 'configs/config.yaml')
+- `--skip-cv`: Skip cross-validation and use predefined latent dimension
+- `--visualize`: Show live reconstruction visualization during training
+
+### Training Mode Examples
+
 ```bash
-# Basic training with cross-validation
-python main.py --mode train --config configs/config.yaml
+# Train with cross-validation to find optimal latent dimension
+python main.py --mode train
 
-# Skip cross-validation and use predefined latent dimension
-python main.py --mode train --config configs/config.yaml --skip-cv
+# Train with custom configuration file
+python main.py --mode train --config configs/custom_config.yaml
 
-# Training with live visualization
-python main.py --mode train --config configs/config.yaml --visualize
+# Train with predefined latent dimension (skip cross-validation)
+python main.py --mode train --skip-cv
+
+# Train with live visualization of reconstructions
+python main.py --mode train --visualize
+
+# Combine multiple flags
+python main.py --mode train --config configs/custom_config.yaml --visualize
 ```
 
 ### GUI Mode
@@ -118,32 +132,6 @@ latent-pilator/
 - `utils/metrics.py`: Evaluation metrics (PSNR, SSIM, MSE)
 - `utils/visualization.py`: Training visualization tools
 - `configs/config.yaml`: Configuration file for all hyperparameters
-
-## Environment Details
-The conda environment includes:
-- Python 3.9
-- PyTorch and torchvision
-- PyQt5 for GUI
-- OpenCV for image processing
-- NumPy for numerical operations
-- Matplotlib for visualization
-- TensorBoard for training visualization
-- Other utility packages (Pillow, tqdm, scikit-learn, etc.)
-
-## Development
-
-To update the environment if changes are made to `environment.yml`:
-```bash
-conda env update -f environment.yml --prune
-```
-
-To deactivate the conda environment:
-```bash
-conda deactivate
-```
-
-## License
-This project is licensed under the MIT License - see the LICENSE file for details.
 
 ## Acknowledgments
 - CelebA dataset (http://mmlab.ie.cuhk.edu.hk/projects/CelebA.html)
