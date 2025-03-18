@@ -1,4 +1,5 @@
 import torch
+import random
 import torch.nn.functional as F
 import numpy as np
 from sklearn.metrics import silhouette_score
@@ -59,7 +60,7 @@ def compute_latent_separability(model, dataset, attribute_vectors, device='cuda'
     return separability_scores
 
 
-def compute_attribute_vectors(model, dataset, device='cuda', max_samples=100, attribute_names=None):
+def compute_attribute_vectors(model, dataset, device='cuda', max_samples=100, attribute_names=None, num_attributes=None):
     """
     Compute attribute vectors for all attributes in the dataset.
     
@@ -68,6 +69,8 @@ def compute_attribute_vectors(model, dataset, device='cuda', max_samples=100, at
         dataset: CelebADataset instance
         device: Device to run computation on
         max_samples: Maximum number of samples to use per attribute category
+        attribute_names: Optional list of specific attribute names to process
+        num_attributes: Optional integer to randomly sample this many attributes from all available attributes
     
     Returns:
         dict: Dictionary mapping attribute names to their corresponding vectors
@@ -80,8 +83,33 @@ def compute_attribute_vectors(model, dataset, device='cuda', max_samples=100, at
     if attribute_names is None:
         attribute_names = dataset.get_attribute_names()
     
+    # Define required attributes that must be included
+    required_attributes = ["Male", "Smiling", "Young", "Bald"]
+    
+    # If num_attributes is specified, sample remaining attributes
+    if num_attributes is not None:
+        # Remove required attributes from the pool to avoid duplicates
+        remaining_attributes = [attr for attr in attribute_names if attr not in required_attributes]
+        
+        # Calculate how many more attributes we need to sample
+        num_remaining = num_attributes - len(required_attributes)
+        
+        if num_remaining > 0:
+            # Randomly sample the remaining attributes
+            sampled_remaining = random.sample(remaining_attributes, min(num_remaining, len(remaining_attributes)))
+            # Combine required and sampled attributes
+            attribute_names = required_attributes + sampled_remaining
+        else:
+            # If num_attributes is less than or equal to number of required attributes,
+            # just use the required attributes
+            attribute_names = required_attributes[:num_attributes]
+    else:
+        # If no num_attributes specified, use all attributes
+        attribute_names = list(set(required_attributes + attribute_names))
+    
     for attr_name in attribute_names:
         # Get images for this attribute using the dataset method
+        print(f"Getting vectors for attribute {attr_name}")
         attr_images = dataset.get_attribute_images(attr_name, max_samples=max_samples)
         
         if attr_images['with'] is None or attr_images['without'] is None:

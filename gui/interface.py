@@ -159,7 +159,8 @@ class LatentPilatorGUI(QMainWindow):
                     model=self.model,
                     dataset=self.dataset,
                     device=self.device,
-                    max_samples=100
+                    max_samples=5000,
+                    num_attributes=10
                 )
                 
                 # Create sliders for attributes
