@@ -216,17 +216,31 @@ def evaluate_vae_performance(model, device='mps', max_samples=1000):
     
     # Compute final scores (normalized between 0 and 1)
     # Reconstruction score (higher is better)
+    # Normalize MSE to [0, 1] using exponential decay
+    mse_score = np.exp(-results['reconstruction']['mse'])
+    # Normalize SSIM from [-1, 1] to [0, 1]
+    ssim_score = (results['reconstruction']['ssim'] + 1) / 2
+    # Normalize KL divergence to [0, 1] using exponential decay
+    kl_score = np.exp(-min(results['reconstruction']['kl_div'], 5))
+    
     results['reconstruction']['score'] = (
-        0.34 * (1 - results['reconstruction']['mse']) +  # MSE (lower is better
-        0.33 * results['reconstruction']['ssim'] +      # SSIM (higher is better)
-        0.33 * (1 - min(results['reconstruction']['kl_div'], 1))  # KL (lower is better)
+        0.34 * mse_score +      # MSE (normalized to [0, 1])
+        0.33 * ssim_score +     # SSIM (normalized to [0, 1])
+        0.33 * kl_score         # KL (normalized to [0, 1])
     )
     
     # Latent space score (higher is better)
+    # Normalize clustering from [-1, 1] to [0, 1]
+    clustering_score = (results['latent']['clustering'] + 1) / 2
+    # Separability is already in [0, 1]
+    separability_score = results['latent']['separability']
+    # Normalize consistency from [-1, 1] to [0, 1]
+    consistency_score = (results['latent']['consistency'] + 1) / 2
+    
     results['latent']['score'] = (
-        0.34 * results['latent']['clustering'] +       # Clustering (higher is better)
-        0.33 * results['latent']['separability'] +     # Separability (higher is better)
-        0.33 * results['latent']['consistency']        # Consistency (higher is better)
+        0.34 * clustering_score +      # Clustering (normalized to [0, 1])
+        0.33 * separability_score +    # Separability (already in [0, 1])
+        0.33 * consistency_score       # Consistency (normalized to [0, 1])
     )
     
     return results

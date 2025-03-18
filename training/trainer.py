@@ -173,14 +173,21 @@ class Trainer:
         """
         Save the final trained model with latent dimension in filename
         """
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        timestamp = datetime.now().strftime("%H_%M_%S")
         latent_dim = self.config['model']['latent_dim']
         filename = f'vae_latent{latent_dim}_{timestamp}.pt'
         save_path = os.path.join(self.models_dir, filename)
         
         # If using DataParallel, save the internal module
         model_to_save = self.model.module if hasattr(self, 'multi_gpu') and self.multi_gpu else self.model
-        torch.save(model_to_save.state_dict(), save_path)
+        
+        # Save model state dict in a dictionary with 'model_state_dict' key
+        save_dict = {
+            'model_state_dict': model_to_save.state_dict(),
+            'config': self.config  # Also save the config for reference
+        }
+        torch.save(save_dict, save_path)
+        
         print(f"\nFinal model saved to: {save_path}")
 
     def train_model(self, train_loader=None, num_epochs=None):

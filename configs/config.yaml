@@ -1,5 +1,5 @@
 model:
-  latent_dim: 128  # Default latent dimension
+  latent_dim: 64  # Default latent dimension
   input_channels: 3  # RGB images
 
 data:
@@ -19,7 +19,7 @@ training:
   cross_validation:
     enabled: true
     sample_size: 20000  # Number of samples to use for CV
-    n_folds: 5  # Number of folds for k-fold CV
+    n_folds: 3  # Number of folds for k-fold CV
     dimensions: [16, 32, 64, 128, 256, 512]  # Dimensions to test
   
   # Resource utilization

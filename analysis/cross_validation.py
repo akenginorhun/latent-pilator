@@ -101,7 +101,7 @@ class CrossValidator:
                 model = trainer.train_model(train_loader=train_loader)
                 
                 # Evaluate using the comprehensive evaluation function
-                eval_results = evaluate_vae_performance(model, print_metrics=False)
+                eval_results = evaluate_vae_performance(model, device=trainer.device)
                 fold_score = (eval_results['reconstruction']['score'] + eval_results['latent']['score']) / 2
                 fold_scores.append(fold_score)
                 fold_details.append(eval_results)

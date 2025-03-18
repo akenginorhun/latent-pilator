@@ -113,12 +113,13 @@ class Decoder(nn.Module):
         return result
 
 class VAE(nn.Module):
-    def __init__(self, latent_dim=32, input_channels=3, image_size=64):
+    def __init__(self, latent_dim=32, input_channels=3, image_size=64, config=None):
         super(VAE, self).__init__()
         self.encoder = Encoder(latent_dim, input_channels, image_size)
         self.decoder = Decoder(latent_dim, input_channels, image_size)
         self.latent_dim = latent_dim
         self.image_size = image_size
+        self.config = config  # Store the configuration
         
         # Get transforms
         self.input_transform, self.output_transform = get_transforms(image_size)
@@ -142,7 +143,7 @@ class VAE(nn.Module):
 
     def decode(self, z):
         result = self.decoder(z)
-        # Apply output transform
+        # Apply output transform if available
         if self.output_transform is not None:
             result = self.output_transform(result)
         return result

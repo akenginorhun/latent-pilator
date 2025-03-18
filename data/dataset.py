@@ -5,7 +5,6 @@ from torchvision import transforms
 from PIL import Image
 import pandas as pd
 import numpy as np
-from torch.utils.data.distributed import DistributedSampler
 
 # Global transforms for consistent usage across the codebase
 def get_transforms(image_size=64):
@@ -45,15 +44,16 @@ class CelebADataset(Dataset):
         
         # Read attributes more efficiently
         self.attr_df = pd.read_csv(attr_path, sep='\s+', skiprows=1, memory_map=True)
-        self.attr_index_map = {attr: idx for idx, attr in enumerate(self.attributes)}
+        self.attributes = self.attr_df.columns.values  # Get attributes first
+        self.attr_index_map = {attr: idx for idx, attr in enumerate(self.attributes)}  # Then create the map
         self.img_names = self.attr_df.index.values
-        self.attributes = self.attr_df.columns.values
         
         # Get default transforms if none provided
         if transform is None:
-            self.transform, _ = get_transforms(target_size)
+            self.input_transform, self.output_transform = get_transforms(target_size)
         else:
-            self.transform = transform
+            self.input_transform = transform
+            self.output_transform = None
 
     def __len__(self):
         return len(self.img_names)
@@ -68,8 +68,8 @@ class CelebADataset(Dataset):
         try:
             # Use faster image loading
             image = Image.open(img_name).convert('RGB')
-            if self.transform:
-                image = self.transform(image)
+            if self.input_transform:
+                image = self.input_transform(image)
         except Exception as e:
             print(f"Warning: Error with image {img_name}: {e}")
             image = torch.zeros(3, *self.target_size)
@@ -79,51 +79,6 @@ class CelebADataset(Dataset):
         
         return image, attributes
 
-    def get_attribute_images(self, attr_name, max_samples=100):
-        """
-        Get images with and without a specific attribute.
-        
-        Args:
-            attr_name (str): Name of the attribute to collect images for
-            max_samples (int): Maximum number of samples to collect for each category
-            
-        Returns:
-            dict: Dictionary containing lists of images with and without the attribute
-                  Format: {'with': list of images, 'without': list of images}
-                  Returns None if attribute not found
-        """
-        if attr_name not in self.attributes:
-            return None
-            
-        attr_idx = list(self.attributes).index(attr_name)
-        images_with = []
-        images_without = []
-        
-        # Get all indices where attribute is present/absent
-        attr_values = self.attr_df.iloc[:, attr_idx].values
-        with_indices = np.where(attr_values == 1)[0]
-        without_indices = np.where(attr_values == -1)[0]
-        
-        # Randomly sample indices
-        if len(with_indices) > max_samples:
-            with_indices = np.random.choice(with_indices, max_samples, replace=False)
-        if len(without_indices) > max_samples:
-            without_indices = np.random.choice(without_indices, max_samples, replace=False)
-        
-        # Collect images
-        for idx in with_indices:
-            img, _ = self[idx]
-            images_with.append(img)
-            
-        for idx in without_indices:
-            img, _ = self[idx]
-            images_without.append(img)
-            
-        return {
-            'with': torch.stack(images_with) if images_with else None,
-            'without': torch.stack(images_without) if images_without else None
-        }
-
     def get_attribute_names(self):
         """
         Get list of all attribute names in the dataset.
@@ -132,6 +87,42 @@ class CelebADataset(Dataset):
             list: List of attribute names
         """
         return list(self.attributes)
+
+    def get_attribute_images(self, attr_name, max_samples=100):
+        """
+        Efficiently retrieve images with and without a given attribute.
+
+        Args:
+            attr_name (str): Name of the attribute.
+            max_samples (int): Maximum number of images per category.
+
+        Returns:
+            dict: {'with': Tensor of images with attribute, 'without': Tensor of images without attribute}
+        """
+        if attr_name not in self.attr_index_map:
+            return None
+
+        # Fast attribute index lookup
+        attr_idx = self.attr_index_map[attr_name]
+        
+        # Get indices of images with and without the attribute
+        attr_values = self.attr_df.iloc[:, attr_idx].values
+        indices_with = np.where(attr_values == 1)[0]
+        indices_without = np.where(attr_values == -1)[0]
+
+        # Random sampling using NumPy's Generator for better randomness
+        rng = np.random.default_rng()
+        sampled_with = rng.choice(indices_with, min(len(indices_with), max_samples), replace=False)
+        sampled_without = rng.choice(indices_without, min(len(indices_without), max_samples), replace=False)
+
+        # Efficient image collection using list comprehensions
+        images_with = [self[i][0] for i in sampled_with]
+        images_without = [self[i][0] for i in sampled_without]
+
+        return {
+            'with': torch.stack(images_with) if images_with else None,
+            'without': torch.stack(images_without) if images_without else None
+        }
 
 def get_celeba_dataset(root_dir, attr_path, target_size=(218, 178)):
     """
@@ -173,11 +164,12 @@ def get_celeba_dataloader(root_dir, attr_path, batch_size=32, num_workers=4, shu
     )
     
     # Create samplers for distributed training
-    train_sampler = DistributedSampler(train_dataset) if distributed else None
-    val_sampler = DistributedSampler(val_dataset, shuffle=False) if distributed else None
-    
-    # Adjust batch size for distributed training
+    train_sampler = None
+    val_sampler = None
     if distributed:
+        from torch.utils.data.distributed import DistributedSampler
+        train_sampler = DistributedSampler(train_dataset)
+        val_sampler = DistributedSampler(val_dataset, shuffle=False)
         batch_size = batch_size // torch.distributed.get_world_size()
     
     # Create dataloaders with optimized settings
